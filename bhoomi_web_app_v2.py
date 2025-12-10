@@ -1638,8 +1638,8 @@ HTML_TEMPLATE = '''
                             🎯 Matches <span class="badge match-badge" id="matchesBadge">0</span>
                         </button>
                     </div>
-                    <button id="exportBtn" class="btn btn-sm" style="background: var(--bg-input); border: 1px solid var(--border-color);">
-                        📥 Export CSV
+                    <button id="exportBtn" class="btn btn-sm" style="background: var(--bg-input); border: 1px solid var(--border-color);" onclick="showDownloadModal()">
+                        📥 Download CSV
                     </button>
                 </div>
                 
@@ -1692,6 +1692,228 @@ HTML_TEMPLATE = '''
         </section>
     </main>
     
+    <!-- Download Modal -->
+    <div id="downloadModal" class="modal" style="display: none;">
+        <div class="modal-overlay" onclick="hideDownloadModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📥 Download CSV Files</h3>
+                <button class="modal-close" onclick="hideDownloadModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="download-section">
+                    <div class="download-card" id="recordsDownloadCard">
+                        <div class="download-icon">📋</div>
+                        <div class="download-info">
+                            <h4>All Records</h4>
+                            <p id="recordsCount">0 records</p>
+                            <p id="recordsPath" class="file-path"></p>
+                        </div>
+                        <div class="download-actions">
+                            <input type="text" id="recordsFilename" placeholder="all_records.csv" class="filename-input">
+                            <button class="btn btn-download" onclick="downloadFile('records')">
+                                ⬇️ Download
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="download-card match-card" id="matchesDownloadCard">
+                        <div class="download-icon">🎯</div>
+                        <div class="download-info">
+                            <h4>Matches Only</h4>
+                            <p id="matchesCount">0 matches</p>
+                            <p id="matchesPath" class="file-path"></p>
+                        </div>
+                        <div class="download-actions">
+                            <input type="text" id="matchesFilename" placeholder="owner_matches.csv" class="filename-input">
+                            <button class="btn btn-download match-btn" onclick="downloadFile('matches')">
+                                ⬇️ Download
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-note">
+                    <p>💡 Files are saved in the project directory. Click download to save a copy with your custom filename.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+        }
+        
+        .modal-content {
+            position: relative;
+            background: var(--bg-card);
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+            width: 90%;
+            max-width: 550px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            animation: modalSlideIn 0.3s ease;
+        }
+        
+        @keyframes modalSlideIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.2rem;
+            color: var(--text-primary);
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        
+        .modal-close:hover { color: var(--text-primary); }
+        
+        .modal-body {
+            padding: 1.5rem;
+        }
+        
+        .download-section {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
+        .download-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 1rem;
+            align-items: center;
+        }
+        
+        .download-card.match-card {
+            border-color: var(--success);
+            background: rgba(16, 185, 129, 0.05);
+        }
+        
+        .download-icon {
+            font-size: 2rem;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-input);
+            border-radius: 10px;
+        }
+        
+        .download-info h4 {
+            margin: 0 0 0.25rem 0;
+            color: var(--text-primary);
+            font-size: 1rem;
+        }
+        
+        .download-info p {
+            margin: 0;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+        
+        .file-path {
+            font-size: 0.75rem !important;
+            color: var(--text-muted) !important;
+            font-family: monospace;
+            word-break: break-all;
+        }
+        
+        .download-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        
+        .filename-input {
+            padding: 0.5rem 0.75rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            width: 160px;
+        }
+        
+        .filename-input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+        
+        .btn-download {
+            padding: 0.5rem 1rem;
+            background: var(--accent-primary);
+            color: var(--bg-primary);
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-download:hover { background: var(--accent-hover); }
+        .btn-download.match-btn { background: var(--success); }
+        .btn-download.match-btn:hover { background: #059669; }
+        .btn-download:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .modal-note {
+            margin-top: 1rem;
+            padding: 0.75rem 1rem;
+            background: rgba(245, 158, 11, 0.1);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent-primary);
+        }
+        
+        .modal-note p {
+            margin: 0;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+    </style>
+    
     <script>
         // State
         let searchRunning = false;
@@ -1741,7 +1963,6 @@ HTML_TEMPLATE = '''
             });
             
             searchBtn.addEventListener('click', toggleSearch);
-            document.getElementById('exportBtn').addEventListener('click', exportCSV);
         }
         
         async function loadDistricts() {
@@ -2003,19 +2224,68 @@ HTML_TEMPLATE = '''
             `).join('');
         }
         
-        async function exportCSV() {
+        // Download Modal Functions
+        async function showDownloadModal() {
+            // Fetch file info
             try {
-                const res = await fetch('/api/search/status');
-                const status = await res.json();
-                if (status.all_records_file) {
-                    alert(`Files saved:\\n📁 ${status.all_records_file}\\n📁 ${status.matches_file}`);
-                } else {
-                    alert('No search results yet');
-                }
+                const res = await fetch('/api/files/info');
+                const info = await res.json();
+                
+                // Update records card
+                document.getElementById('recordsCount').textContent = `${info.all_records.count} records`;
+                document.getElementById('recordsPath').textContent = info.all_records.filename || 'No file yet';
+                document.getElementById('recordsFilename').value = info.all_records.filename || 'all_records.csv';
+                
+                // Update matches card
+                document.getElementById('matchesCount').textContent = `${info.matches.count} matches`;
+                document.getElementById('matchesPath').textContent = info.matches.filename || 'No file yet';
+                document.getElementById('matchesFilename').value = info.matches.filename || 'owner_matches.csv';
+                
+                // Enable/disable download buttons
+                const recordsBtn = document.querySelector('#recordsDownloadCard .btn-download');
+                const matchesBtn = document.querySelector('#matchesDownloadCard .btn-download');
+                
+                recordsBtn.disabled = !info.all_records.exists;
+                matchesBtn.disabled = !info.matches.exists;
+                
             } catch (e) {
-                alert('Error getting file info');
+                console.error('Error fetching file info:', e);
             }
+            
+            // Show modal
+            document.getElementById('downloadModal').style.display = 'flex';
         }
+        
+        function hideDownloadModal() {
+            document.getElementById('downloadModal').style.display = 'none';
+        }
+        
+        function downloadFile(fileType) {
+            let filename;
+            if (fileType === 'records') {
+                filename = document.getElementById('recordsFilename').value || 'all_records.csv';
+            } else {
+                filename = document.getElementById('matchesFilename').value || 'owner_matches.csv';
+            }
+            
+            // Ensure .csv extension
+            if (!filename.endsWith('.csv')) {
+                filename += '.csv';
+            }
+            
+            // Trigger download
+            const url = `/api/download/${fileType}?filename=${encodeURIComponent(filename)}`;
+            window.location.href = url;
+            
+            addLog(`📥 Downloaded: ${filename}`);
+        }
+        
+        // Close modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                hideDownloadModal();
+            }
+        });
     </script>
 </body>
 </html>
@@ -2064,6 +2334,68 @@ def search_status():
 def stop_search():
     coordinator.stop_search()
     return jsonify({'status': 'stopped'})
+
+@app.route('/api/download/<file_type>')
+def download_csv(file_type):
+    """Download CSV file with custom filename"""
+    from flask import send_file, request
+    
+    state = coordinator.get_state()
+    
+    if file_type == 'records':
+        filepath = state.get('all_records_file', '')
+        default_name = 'all_records.csv'
+    elif file_type == 'matches':
+        filepath = state.get('matches_file', '')
+        default_name = 'owner_matches.csv'
+    else:
+        return jsonify({'error': 'Invalid file type'}), 400
+    
+    if not filepath or not os.path.exists(filepath):
+        return jsonify({'error': 'File not found. Run a search first.'}), 404
+    
+    # Get custom filename from query param or use default
+    custom_name = request.args.get('filename', default_name)
+    if not custom_name.endswith('.csv'):
+        custom_name += '.csv'
+    
+    return send_file(
+        filepath,
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=custom_name
+    )
+
+@app.route('/api/files/info')
+def get_files_info():
+    """Get info about saved CSV files"""
+    state = coordinator.get_state()
+    
+    all_records_file = state.get('all_records_file', '')
+    matches_file = state.get('matches_file', '')
+    
+    result = {
+        'all_records': {
+            'exists': os.path.exists(all_records_file) if all_records_file else False,
+            'filename': os.path.basename(all_records_file) if all_records_file else '',
+            'filepath': all_records_file,
+            'count': state.get('total_records', 0)
+        },
+        'matches': {
+            'exists': os.path.exists(matches_file) if matches_file else False,
+            'filename': os.path.basename(matches_file) if matches_file else '',
+            'filepath': matches_file,
+            'count': state.get('total_matches', 0)
+        }
+    }
+    
+    # Get file sizes if they exist
+    if result['all_records']['exists']:
+        result['all_records']['size'] = os.path.getsize(all_records_file)
+    if result['matches']['exists']:
+        result['matches']['size'] = os.path.getsize(matches_file)
+    
+    return jsonify(result)
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # MAIN
