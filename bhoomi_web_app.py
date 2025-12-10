@@ -949,6 +949,8 @@ HTML_TEMPLATE = '''
                 const data = await res.json();
                 
                 hobliSelect.innerHTML = '<option value="">Select Hobli</option>';
+                // Add "All Hoblis" option
+                hobliSelect.innerHTML += '<option value="all">🔍 All Hoblis (Search Entire Taluk)</option>';
                 data.forEach(h => {
                     const name = h.hobli_name_kn || h.hobli_name || h.hobli_code;
                     hobliSelect.innerHTML += `<option value="${h.hobli_code}">${name}</option>`;
@@ -961,13 +963,23 @@ HTML_TEMPLATE = '''
         
         async function loadVillages(distCode, talukCode, hobliCode) {
             resetDropdowns(['village']);
+            
+            // If "All Hoblis" selected, set village to "all" automatically
+            if (hobliCode === 'all') {
+                villageSelect.innerHTML = '<option value="all">🔍 All Villages (All Hoblis)</option>';
+                villageSelect.disabled = false;
+                return;
+            }
+            
             villageSelect.innerHTML = '<option value="">Loading...</option>';
             
             try {
                 const res = await fetch(`/api/villages/${distCode}/${talukCode}/${hobliCode}`);
                 const data = await res.json();
                 
-                villageSelect.innerHTML = '<option value="">Select Village (or leave for all)</option>';
+                villageSelect.innerHTML = '<option value="">Select Village</option>';
+                // Add "All Villages" option
+                villageSelect.innerHTML += '<option value="all">🔍 All Villages (in this Hobli)</option>';
                 data.forEach(v => {
                     const name = v.village_name_kn || v.village_name || v.village_code;
                     villageSelect.innerHTML += `<option value="${v.village_code}">${name}</option>`;
@@ -1007,10 +1019,14 @@ HTML_TEMPLATE = '''
             const villageCode = villageSelect.value;
             const maxSurvey = parseInt(maxSurveyInput.value) || 200;
             
-            if (!districtCode || !talukCode || !hobliCode) {
-                alert('Please select at least District, Taluk, and Hobli');
+            if (!districtCode || !talukCode) {
+                alert('Please select at least District and Taluk');
                 return;
             }
+            
+            // If hobli not selected, default to "all"
+            const finalHobliCode = hobliCode || 'all';
+            const finalVillageCode = villageCode || 'all';
             
             searchRunning = true;
             allRecords = [];
@@ -1030,8 +1046,8 @@ HTML_TEMPLATE = '''
                         owner_name: ownerName,
                         district_code: districtCode,
                         taluk_code: talukCode,
-                        hobli_code: hobliCode,
-                        village_code: villageCode,
+                        hobli_code: finalHobliCode,
+                        village_code: finalVillageCode,
                         max_survey: maxSurvey
                     })
                 });
@@ -1321,23 +1337,47 @@ def background_search(params):
             taluk_sel.select_by_value(params['taluk_code'])
             time.sleep(3)
             
-            # Select hobli
+            # Get all hoblis for this taluk
             hobli_sel = Select(driver.find_element(By.ID, IDS['hobli']))
-            hobli_opts = {str(int(float(o.get_attribute('value')))): o.text for o in hobli_sel.options if o.get_attribute('value')}
-            hobli_name = hobli_opts.get(params.get('hobli_code', ''), 'Unknown')
-            hobli_sel.select_by_value(params['hobli_code'])
-            time.sleep(3)
+            all_hoblis = [(o.get_attribute('value'), o.text) for o in hobli_sel.options 
+                         if o.get_attribute('value') and 'Select' not in o.text]
             
-            # Get villages
-            village_sel = Select(driver.find_element(By.ID, IDS['village']))
-            villages = [(o.get_attribute('value'), o.text) for o in village_sel.options if o.get_attribute('value') and 'Select' not in o.text]
+            # Filter hoblis based on selection
+            hobli_code_param = params.get('hobli_code', 'all')
+            if hobli_code_param == 'all':
+                hoblis_to_search = all_hoblis
+                search_state['log'].append(f"Searching ALL {len(hoblis_to_search)} hoblis in {taluk_name}")
+            else:
+                hoblis_to_search = [(h, n) for h, n in all_hoblis if h == hobli_code_param]
             
-            if params.get('village_code'):
-                villages = [(v, n) for v, n in villages if v == params['village_code']]
+            # Build list of all villages to search
+            all_villages_to_search = []
+            for hobli_code, hobli_name in hoblis_to_search:
+                driver.get(SERVICE2_URL)
+                time.sleep(2)
+                Select(driver.find_element(By.ID, IDS['district'])).select_by_value(params['district_code'])
+                time.sleep(2)
+                Select(driver.find_element(By.ID, IDS['taluk'])).select_by_value(params['taluk_code'])
+                time.sleep(2)
+                Select(driver.find_element(By.ID, IDS['hobli'])).select_by_value(hobli_code)
+                time.sleep(2)
+                
+                village_sel = Select(driver.find_element(By.ID, IDS['village']))
+                villages_in_hobli = [(o.get_attribute('value'), o.text, hobli_code, hobli_name) 
+                                    for o in village_sel.options 
+                                    if o.get_attribute('value') and 'Select' not in o.text]
+                
+                # Filter villages if specific one selected
+                village_code_param = params.get('village_code', 'all')
+                if village_code_param != 'all' and village_code_param:
+                    villages_in_hobli = [(v, vn, h, hn) for v, vn, h, hn in villages_in_hobli if v == village_code_param]
+                
+                all_villages_to_search.extend(villages_in_hobli)
             
-            total_villages = len(villages)
+            total_villages = len(all_villages_to_search)
+            search_state['log'].append(f"Total villages to search: {total_villages}")
             
-            for vi, (village_code, village_name) in enumerate(villages):
+            for vi, (village_code, village_name, hobli_code, hobli_name) in enumerate(all_villages_to_search):
                 if not search_state['running']:
                     break
                 
@@ -1358,7 +1398,7 @@ def background_search(params):
                         time.sleep(2)
                         Select(driver.find_element(By.ID, IDS['taluk'])).select_by_value(params['taluk_code'])
                         time.sleep(2)
-                        Select(driver.find_element(By.ID, IDS['hobli'])).select_by_value(params['hobli_code'])
+                        Select(driver.find_element(By.ID, IDS['hobli'])).select_by_value(hobli_code)
                         time.sleep(2)
                         Select(driver.find_element(By.ID, IDS['village'])).select_by_value(village_code)
                         time.sleep(2)
@@ -1446,7 +1486,7 @@ def background_search(params):
                                     time.sleep(2)
                                     Select(driver.find_element(By.ID, IDS['taluk'])).select_by_value(params['taluk_code'])
                                     time.sleep(2)
-                                    Select(driver.find_element(By.ID, IDS['hobli'])).select_by_value(params['hobli_code'])
+                                    Select(driver.find_element(By.ID, IDS['hobli'])).select_by_value(hobli_code)
                                     time.sleep(2)
                                     Select(driver.find_element(By.ID, IDS['village'])).select_by_value(village_code)
                                     time.sleep(2)
