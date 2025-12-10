@@ -355,38 +355,81 @@ class SearchWorker:
             self.state.villages_completed = villages_completed
             self.state.active_workers = active_workers
     
-    def _init_browser(self):
-        """Initialize browser with optimized settings"""
+    def _init_browser(self, retry_count: int = 3):
+        """Initialize browser with optimized settings and retry logic"""
+        import shutil
+        import tempfile
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
         from selenium.webdriver.chrome.service import Service
         from webdriver_manager.chrome import ChromeDriverManager
         
-        options = Options()
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('--disable-extensions')
-        options.add_argument('--disable-images')
-        options.add_argument('--blink-settings=imagesEnabled=false')
-        options.add_argument(f'--user-data-dir=/tmp/chrome_worker_{self.worker_id}')
+        # Clean up old user data directory
+        user_data_dir = os.path.join(tempfile.gettempdir(), f'chrome_worker_{self.worker_id}_{os.getpid()}')
+        if os.path.exists(user_data_dir):
+            try:
+                shutil.rmtree(user_data_dir)
+            except:
+                pass
         
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=options)
-        self.driver.set_page_load_timeout(Config.PAGE_LOAD_TIMEOUT)
+        last_error = None
+        for attempt in range(retry_count):
+            try:
+                options = Options()
+                options.add_argument('--headless')
+                options.add_argument('--no-sandbox')
+                options.add_argument('--disable-dev-shm-usage')
+                options.add_argument('--disable-gpu')
+                options.add_argument('--window-size=1920,1080')
+                options.add_argument('--disable-extensions')
+                options.add_argument('--disable-images')
+                options.add_argument('--blink-settings=imagesEnabled=false')
+                options.add_argument(f'--user-data-dir={user_data_dir}')
+                options.add_argument('--disable-software-rasterizer')
+                options.add_argument('--remote-debugging-port=0')  # Random port
+                
+                service = Service(ChromeDriverManager().install())
+                self.driver = webdriver.Chrome(service=service, options=options)
+                self.driver.set_page_load_timeout(Config.PAGE_LOAD_TIMEOUT)
+                
+                self._add_log(f"Browser initialized (attempt {attempt + 1})")
+                return  # Success
+                
+            except Exception as e:
+                last_error = e
+                self._add_log(f"Browser init failed (attempt {attempt + 1}): {str(e)[:50]}")
+                time.sleep(2)  # Wait before retry
+                
+                # Cleanup failed attempt
+                try:
+                    if self.driver:
+                        self.driver.quit()
+                except:
+                    pass
+                self.driver = None
         
-        self._add_log("Browser initialized")
+        # All retries failed
+        raise Exception(f"Failed to initialize browser after {retry_count} attempts: {last_error}")
     
     def _close_browser(self):
-        """Safely close browser"""
+        """Safely close browser and cleanup"""
+        import shutil
+        import tempfile
+        
         if self.driver:
             try:
                 self.driver.quit()
             except:
                 pass
             self.driver = None
+        
+        # Clean up user data directory
+        user_data_dir = os.path.join(tempfile.gettempdir(), f'chrome_worker_{self.worker_id}_{os.getpid()}')
+        try:
+            if os.path.exists(user_data_dir):
+                shutil.rmtree(user_data_dir, ignore_errors=True)
+        except:
+            pass
     
     def _extract_owners(self, page_source: str) -> List[dict]:
         """Extract owner details from page source"""
@@ -605,30 +648,66 @@ class SearchWorker:
                     break
     
     def run(self):
-        """Main worker execution"""
+        """Main worker execution with browser crash recovery"""
         self._update_status(status='running', villages_total=len(self.villages))
         self._add_log(f"Starting with {len(self.villages)} villages")
+        
+        browser_crashes = 0
+        max_browser_crashes = 3
         
         try:
             self._init_browser()
             
-            for idx, (village_code, village_name, hobli_code, hobli_name) in enumerate(self.villages):
+            idx = 0
+            while idx < len(self.villages):
                 if not self.state.running:
                     self._add_log("Stopped by user")
                     break
                 
-                self._add_log(f"Village {idx+1}/{len(self.villages)}: {village_name}")
-                self._search_village(village_code, village_name, hobli_code, hobli_name)
+                village_code, village_name, hobli_code, hobli_name = self.villages[idx]
                 
-                self._update_status(villages_completed=idx + 1)
-                self._update_global_stats()
+                try:
+                    self._add_log(f"Village {idx+1}/{len(self.villages)}: {village_name}")
+                    self._search_village(village_code, village_name, hobli_code, hobli_name)
+                    
+                    self._update_status(villages_completed=idx + 1)
+                    self._update_global_stats()
+                    idx += 1  # Move to next village
+                    browser_crashes = 0  # Reset crash count on success
+                    
+                except Exception as village_error:
+                    error_str = str(village_error).lower()
+                    
+                    # Check if it's a browser crash
+                    if 'session' in error_str or 'chrome' in error_str or 'browser' in error_str:
+                        browser_crashes += 1
+                        self._add_log(f"Browser crash #{browser_crashes}, restarting...")
+                        
+                        if browser_crashes >= max_browser_crashes:
+                            self._add_log(f"Too many crashes, skipping to next village")
+                            idx += 1
+                            browser_crashes = 0
+                        
+                        # Try to restart browser
+                        self._close_browser()
+                        time.sleep(2)
+                        try:
+                            self._init_browser()
+                        except Exception as restart_error:
+                            self._add_log(f"Browser restart failed: {str(restart_error)[:30]}")
+                            idx += 1  # Skip this village
+                    else:
+                        # Non-browser error, log and continue
+                        self.errors += 1
+                        self._add_log(f"Village error: {str(village_error)[:50]}")
+                        idx += 1
             
             self._update_status(status='completed')
-            self._add_log(f"Completed: {self.records_found} records, {self.matches_found} matches")
+            self._add_log(f"✅ Completed: {self.records_found} records, {self.matches_found} matches")
             
         except Exception as e:
             self._update_status(status='failed', errors=self.errors + 1)
-            self._add_log(f"Error: {str(e)}")
+            self._add_log(f"Error: {str(e)[:100]}")
             self.logger.error(f"Worker failed: {traceback.format_exc()}")
             
         finally:
