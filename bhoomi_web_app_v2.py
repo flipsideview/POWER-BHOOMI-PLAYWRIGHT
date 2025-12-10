@@ -23,6 +23,7 @@ import time
 import logging
 import threading
 import queue
+import platform
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field, asdict
@@ -51,8 +52,8 @@ class Config:
     PORT = 5001
     DEBUG = True
     
-    # Parallel Processing
-    MAX_WORKERS = 4  # Number of parallel browser instances
+    # Parallel Processing - Use 2 workers on Windows to avoid Chrome crashes
+    MAX_WORKERS = 2 if platform.system() == 'Windows' else 4
     
     # Timeouts (seconds)
     PAGE_LOAD_TIMEOUT = 30
@@ -62,7 +63,7 @@ class Config:
     
     # Search Settings
     DEFAULT_MAX_SURVEY = 200
-    EMPTY_SURVEY_THRESHOLD = 30  # Skip village after this many empty surveys
+    EMPTY_SURVEY_THRESHOLD = 50  # Skip village after this many consecutive empty surveys
     
     # URLs
     ECHAWADI_BASE = "https://rdservices.karnataka.gov.in/echawadi/Home"
@@ -359,16 +360,23 @@ class SearchWorker:
         """Initialize browser with optimized settings and retry logic"""
         import shutil
         import tempfile
+        import platform
+        import subprocess
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
         from selenium.webdriver.chrome.service import Service
         from webdriver_manager.chrome import ChromeDriverManager
         
-        # Clean up old user data directory
-        user_data_dir = os.path.join(tempfile.gettempdir(), f'chrome_worker_{self.worker_id}_{os.getpid()}')
-        if os.path.exists(user_data_dir):
+        is_windows = platform.system() == 'Windows'
+        
+        # Kill any hanging Chrome processes on Windows before starting
+        if is_windows and self.worker_id == 0:
             try:
-                shutil.rmtree(user_data_dir)
+                subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], 
+                             capture_output=True, timeout=5)
+                subprocess.run(['taskkill', '/F', '/IM', 'chromedriver.exe'], 
+                             capture_output=True, timeout=5)
+                time.sleep(1)
             except:
                 pass
         
@@ -376,7 +384,9 @@ class SearchWorker:
         for attempt in range(retry_count):
             try:
                 options = Options()
-                options.add_argument('--headless')
+                
+                # Use new headless mode for better Windows compatibility
+                options.add_argument('--headless=new')
                 options.add_argument('--no-sandbox')
                 options.add_argument('--disable-dev-shm-usage')
                 options.add_argument('--disable-gpu')
@@ -384,9 +394,29 @@ class SearchWorker:
                 options.add_argument('--disable-extensions')
                 options.add_argument('--disable-images')
                 options.add_argument('--blink-settings=imagesEnabled=false')
-                options.add_argument(f'--user-data-dir={user_data_dir}')
                 options.add_argument('--disable-software-rasterizer')
-                options.add_argument('--remote-debugging-port=0')  # Random port
+                
+                # Windows-specific fixes
+                if is_windows:
+                    options.add_argument('--disable-features=VizDisplayCompositor')
+                    options.add_argument('--disable-background-networking')
+                    options.add_argument('--disable-default-apps')
+                    options.add_argument('--disable-sync')
+                    options.add_argument('--disable-translate')
+                    options.add_argument('--metrics-recording-only')
+                    options.add_argument('--mute-audio')
+                    options.add_argument('--no-first-run')
+                    options.add_argument('--safebrowsing-disable-auto-update')
+                    # Don't use custom user data dir on Windows - causes crashes
+                else:
+                    # Use custom user data dir only on non-Windows
+                    user_data_dir = os.path.join(tempfile.gettempdir(), f'chrome_worker_{self.worker_id}_{os.getpid()}')
+                    if os.path.exists(user_data_dir):
+                        try:
+                            shutil.rmtree(user_data_dir)
+                        except:
+                            pass
+                    options.add_argument(f'--user-data-dir={user_data_dir}')
                 
                 service = Service(ChromeDriverManager().install())
                 self.driver = webdriver.Chrome(service=service, options=options)
@@ -398,7 +428,7 @@ class SearchWorker:
             except Exception as e:
                 last_error = e
                 self._add_log(f"Browser init failed (attempt {attempt + 1}): {str(e)[:50]}")
-                time.sleep(2)  # Wait before retry
+                time.sleep(3)  # Wait longer before retry on Windows
                 
                 # Cleanup failed attempt
                 try:
@@ -486,6 +516,10 @@ class SearchWorker:
                 return
             
             self._update_status(current_survey=survey_no)
+            
+            # Log every 10th survey number for progress tracking
+            if survey_no == 1 or survey_no % 10 == 0:
+                self._add_log(f"📍 {village_name}: Checking survey {survey_no}/{max_survey}")
             
             try:
                 # Navigate to portal
@@ -827,6 +861,23 @@ class ParallelSearchCoordinator:
             chunks[i % num_workers].append(village)
         return chunks
     
+    def _get_downloads_folder(self) -> str:
+        """Get user's Downloads folder path"""
+        import platform
+        
+        if platform.system() == 'Windows':
+            # Windows Downloads folder
+            downloads = os.path.join(os.environ.get('USERPROFILE', ''), 'Downloads')
+        else:
+            # macOS/Linux Downloads folder
+            downloads = os.path.join(os.path.expanduser('~'), 'Downloads')
+        
+        # Fallback to current directory if Downloads doesn't exist
+        if not os.path.exists(downloads):
+            downloads = os.getcwd()
+        
+        return downloads
+    
     def start_search(self, params: dict) -> bool:
         """Start parallel search"""
         if self.state.running:
@@ -838,14 +889,19 @@ class ParallelSearchCoordinator:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             owner_name = params.get('owner_name', '')
             
+            # Save CSVs to Downloads folder by default
+            downloads_folder = self._get_downloads_folder()
+            all_records_path = os.path.join(downloads_folder, f'bhoomi_all_records_{timestamp}.csv')
+            matches_path = os.path.join(downloads_folder, f'bhoomi_matches_{timestamp}.csv')
+            
             self.state = SearchState(
                 running=True,
                 completed=False,
                 start_time=datetime.now().isoformat(),
                 owner_name=owner_name,
                 owner_variants=[owner_name, owner_name.upper(), owner_name.lower()],
-                all_records_file=f'all_records_{timestamp}.csv',
-                matches_file=f'owner_matches_{timestamp}.csv'
+                all_records_file=all_records_path,
+                matches_file=matches_path
             )
             
             # Initialize CSV writers
