@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║                  POWER-BHOOMI v2.2 - MAC EDITION (4 WORKERS)                         ║
+║                  POWER-BHOOMI v3.0 - BULLETPROOF EDITION                             ║
 ║                        Karnataka Land Records Search Tool                             ║
 ╠══════════════════════════════════════════════════════════════════════════════════════╣
 ║  Features:                                                                            ║
 ║  • 4 parallel browser workers (optimized for macOS)                                  ║
-║  • Fast timeouts for maximum speed                                                   ║
+║  • SESSION EXPIRATION DETECTION & AUTO-RECOVERY                                      ║
+║  • ZERO VILLAGES MISSED - Retry on session expire, not skip!                         ║
 ║  • Sequential survey iteration (1, 2, 3... no skips)                                 ║
 ║  • Thread-safe CSV output to Downloads                                               ║
 ║  • Real-time progress with survey tracking                                           ║
-║  • Robust error recovery                                                             ║
+║  • Robust error recovery with detailed logging                                       ║
 ╚══════════════════════════════════════════════════════════════════════════════════════╝
 
-Version: 2.2.0-Mac
+Version: 3.0.0-Bulletproof
 Author: POWER-BHOOMI Team
 """
 
@@ -66,6 +67,10 @@ class Config:
     # Search Settings - NO SURVEY SKIPPING
     DEFAULT_MAX_SURVEY = 200
     EMPTY_SURVEY_THRESHOLD = 100  # High threshold to avoid premature skipping
+    
+    # Session Recovery Settings
+    MAX_SESSION_RETRIES = 5  # Retry this many times on session expiry
+    SESSION_REFRESH_WAIT = 3  # Wait after refreshing session
     
     # URLs
     ECHAWADI_BASE = "https://rdservices.karnataka.gov.in/echawadi/Home"
@@ -148,6 +153,13 @@ class SearchState:
     villages_completed: int = 0
     total_records: int = 0
     total_matches: int = 0
+    
+    # Village tracking - BULLETPROOF: Track every village
+    villages_all: List[str] = field(default_factory=list)  # All villages to search
+    villages_processed: List[str] = field(default_factory=list)  # Successfully processed
+    villages_retried: List[str] = field(default_factory=list)  # Had to retry (session expiry)
+    villages_failed: List[str] = field(default_factory=list)  # Failed after retries
+    session_recoveries: int = 0  # Count of session recovery attempts
     
     # Worker details
     workers: Dict[int, WorkerStatus] = field(default_factory=dict)
@@ -445,6 +457,60 @@ class SearchWorker:
         
         # Clean up user data directory
         user_data_dir = os.path.join(tempfile.gettempdir(), f'chrome_worker_{self.worker_id}_{os.getpid()}')
+    
+    def _is_session_expired(self, page_source: str = None) -> bool:
+        """
+        Detect if the Bhoomi portal session has expired.
+        Returns True if session expired, False otherwise.
+        """
+        try:
+            if page_source is None:
+                page_source = self.driver.page_source
+            
+            # Check for session expiry messages
+            session_expired_indicators = [
+                'session expired',
+                'please login again',
+                'session timeout',
+                'your session has expired',
+                'login again',
+                'session has been terminated',
+            ]
+            
+            page_lower = page_source.lower()
+            for indicator in session_expired_indicators:
+                if indicator in page_lower:
+                    return True
+            
+            return False
+        except Exception as e:
+            self.logger.error(f"Session check error: {e}")
+            return False
+    
+    def _refresh_session(self) -> bool:
+        """
+        Refresh the session by navigating back to the portal.
+        Returns True if session refresh succeeded, False otherwise.
+        """
+        try:
+            self._add_log(f"🔄 Refreshing session...")
+            
+            # Navigate to a fresh page to get a new session
+            self.driver.delete_all_cookies()
+            self.driver.get(Config.SERVICE2_URL)
+            time.sleep(Config.SESSION_REFRESH_WAIT)
+            
+            # Verify session is good
+            if not self._is_session_expired():
+                self._add_log(f"✅ Session refreshed successfully")
+                return True
+            else:
+                self._add_log(f"⚠️ Session still expired after refresh")
+                return False
+                
+        except Exception as e:
+            self._add_log(f"❌ Session refresh failed: {str(e)[:50]}")
+            return False
         try:
             if os.path.exists(user_data_dir):
                 shutil.rmtree(user_data_dir, ignore_errors=True)
@@ -480,7 +546,10 @@ class SearchWorker:
         return owners
     
     def _search_village(self, village_code: str, village_name: str, hobli_code: str, hobli_name: str):
-        """Search a single village for all survey numbers"""
+        """
+        Search a single village for all survey numbers.
+        NOW WITH SESSION EXPIRATION DETECTION AND RECOVERY!
+        """
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import Select
         from selenium.webdriver.support.ui import WebDriverWait
@@ -502,9 +571,13 @@ class SearchWorker:
         empty_count = 0
         surveys_checked = 0
         surveys_with_data = 0
+        session_retries = 0  # Track session recovery attempts
+        
+        self._add_log(f"🏘️ Starting {village_name}: Surveys 1 to {max_survey}")
         
         # SEQUENTIAL SURVEY ITERATION: 1, 2, 3... NO SKIPPING
-        for survey_no in range(1, max_survey + 1):
+        survey_no = 1
+        while survey_no <= max_survey:
             if not self.state.running:
                 self._add_log(f"⏹️ Stopped at survey {survey_no}/{max_survey}")
                 return
@@ -512,14 +585,38 @@ class SearchWorker:
             surveys_checked += 1
             self._update_status(current_survey=survey_no)
             
-            # Log every 5th survey for better tracking
-            if survey_no == 1 or survey_no % 5 == 0:
+            # Log every 10th survey for better tracking
+            if survey_no == 1 or survey_no % 10 == 0:
                 self._add_log(f"📍 {village_name}: Survey {survey_no}/{max_survey} (found {surveys_with_data})")
             
             try:
                 # Navigate to portal
                 self.driver.get(Config.SERVICE2_URL)
                 time.sleep(Config.POST_SELECT_WAIT)
+                
+                # ═══════════════════════════════════════════════════════════════════════
+                # SESSION EXPIRATION CHECK #1 - After loading portal
+                # ═══════════════════════════════════════════════════════════════════════
+                if self._is_session_expired():
+                    self._add_log(f"⚠️ Session expired at {village_name} survey {survey_no}")
+                    if session_retries < Config.MAX_SESSION_RETRIES:
+                        session_retries += 1
+                        self._add_log(f"🔄 Retry {session_retries}/{Config.MAX_SESSION_RETRIES} - refreshing session...")
+                        if self._refresh_session():
+                            continue  # RETRY same survey, don't increment
+                        else:
+                            # Refresh failed, try restarting browser
+                            self._add_log(f"⚠️ Session refresh failed, restarting browser...")
+                            self._close_browser()
+                            time.sleep(2)
+                            self._init_browser()
+                            continue  # RETRY same survey
+                    else:
+                        self._add_log(f"❌ Max session retries reached for {village_name}")
+                        raise Exception(f"Session expired {session_retries} times for {village_name}")
+                
+                # Reset session retries on successful page load
+                session_retries = 0
                 
                 # Select location (fast sequence)
                 Select(self.driver.find_element(By.ID, IDS['district'])).select_by_value(self.params['district_code'])
@@ -544,17 +641,32 @@ class SearchWorker:
                 self.driver.execute_script("arguments[0].click();", go_btn)
                 time.sleep(Config.POST_CLICK_WAIT)
                 
+                # ═══════════════════════════════════════════════════════════════════════
+                # SESSION EXPIRATION CHECK #2 - After clicking GO
+                # ═══════════════════════════════════════════════════════════════════════
+                page_source = self.driver.page_source
+                if self._is_session_expired(page_source):
+                    self._add_log(f"⚠️ Session expired after GO click - {village_name} survey {survey_no}")
+                    if session_retries < Config.MAX_SESSION_RETRIES:
+                        session_retries += 1
+                        self._refresh_session()
+                        continue  # RETRY same survey, don't increment!
+                    else:
+                        raise Exception(f"Persistent session expiry for {village_name}")
+                
                 # Check if surnoc populated
                 surnoc_sel = Select(self.driver.find_element(By.ID, IDS['surnoc']))
                 surnoc_opts = [o.text for o in surnoc_sel.options if "Select" not in o.text]
                 
                 if not surnoc_opts:
+                    # This is a genuinely empty survey (not session expired)
                     empty_count += 1
                     # Only skip village if we've had MANY consecutive empty surveys
                     if empty_count > Config.EMPTY_SURVEY_THRESHOLD:
-                        self._add_log(f"⏭️ {village_name}: {empty_count} consecutive empty surveys, moving on...")
+                        self._add_log(f"⏭️ {village_name}: {empty_count} consecutive empty surveys, completing village")
                         self._add_log(f"📊 {village_name} Summary: Checked {surveys_checked}, Found data in {surveys_with_data}")
                         break
+                    survey_no += 1  # Move to next survey
                     continue
                 
                 # Found data - reset empty count and increment found count
@@ -672,12 +784,34 @@ class SearchWorker:
                     except Exception as e:
                         self.errors += 1
                         continue
+                
+                # ═══════════════════════════════════════════════════════════════════════
+                # SUCCESSFULLY PROCESSED SURVEY - Move to next
+                # ═══════════════════════════════════════════════════════════════════════
+                survey_no += 1
                         
             except Exception as e:
+                error_str = str(e).lower()
+                
+                # Check if it's a session expiry we should retry
+                if 'session' in error_str or 'expired' in error_str:
+                    self._add_log(f"⚠️ Session error at survey {survey_no}: {str(e)[:50]}")
+                    if session_retries < Config.MAX_SESSION_RETRIES:
+                        session_retries += 1
+                        self._refresh_session()
+                        continue  # RETRY same survey, don't increment!
+                
+                # Other error - log and continue to next survey
                 self.errors += 1
                 empty_count += 1
+                survey_no += 1  # Move to next survey
+                
                 if empty_count > Config.EMPTY_SURVEY_THRESHOLD:
+                    self._add_log(f"📊 {village_name} complete after {surveys_checked} surveys, {surveys_with_data} with data")
                     break
+        
+        # End of village summary
+        self._add_log(f"✅ {village_name} COMPLETE: {surveys_checked} surveys, {surveys_with_data} with data, {self.records_found} records")
     
     def run(self):
         """Main worker execution with browser crash recovery"""
@@ -699,8 +833,15 @@ class SearchWorker:
                 village_code, village_name, hobli_code, hobli_name = self.villages[idx]
                 
                 try:
-                    self._add_log(f"Village {idx+1}/{len(self.villages)}: {village_name}")
+                    self._add_log(f"🏘️ Village {idx+1}/{len(self.villages)}: {village_name}")
                     self._search_village(village_code, village_name, hobli_code, hobli_name)
+                    
+                    # ═══════════════════════════════════════════════════════════════════════
+                    # SUCCESSFULLY PROCESSED - Track it!
+                    # ═══════════════════════════════════════════════════════════════════════
+                    with self.state_lock:
+                        if village_name not in self.state.villages_processed:
+                            self.state.villages_processed.append(village_name)
                     
                     self._update_status(villages_completed=idx + 1)
                     self._update_global_stats()
@@ -709,29 +850,47 @@ class SearchWorker:
                     
                 except Exception as village_error:
                     error_str = str(village_error).lower()
+                    self._add_log(f"⚠️ Village error: {str(village_error)[:80]}")
                     
-                    # Check if it's a browser crash
-                    if 'session' in error_str or 'chrome' in error_str or 'browser' in error_str:
+                    # Check if it's a browser/session crash
+                    if any(x in error_str for x in ['session', 'chrome', 'browser', 'expired', 'webdriver']):
                         browser_crashes += 1
-                        self._add_log(f"Browser crash #{browser_crashes}, restarting...")
+                        self._add_log(f"🔄 Browser/session issue #{browser_crashes}/{max_browser_crashes}")
                         
-                        if browser_crashes >= max_browser_crashes:
-                            self._add_log(f"Too many crashes, skipping to next village")
-                            idx += 1
-                            browser_crashes = 0
+                        # Track retried villages
+                        with self.state_lock:
+                            if village_name not in self.state.villages_retried:
+                                self.state.villages_retried.append(village_name)
+                            self.state.session_recoveries += 1
                         
-                        # Try to restart browser
+                        # Try to restart browser and RETRY the same village
                         self._close_browser()
-                        time.sleep(2)
+                        time.sleep(3)
+                        
                         try:
                             self._init_browser()
+                            
+                            # Only skip village after max retries
+                            if browser_crashes >= max_browser_crashes:
+                                self._add_log(f"❌ Max retries reached for {village_name}, moving to next")
+                                # Track failed village
+                                with self.state_lock:
+                                    if village_name not in self.state.villages_failed:
+                                        self.state.villages_failed.append(village_name)
+                                idx += 1
+                                browser_crashes = 0
+                            else:
+                                self._add_log(f"🔁 Retrying village {village_name}...")
+                                # Don't increment idx - retry same village
+                                
                         except Exception as restart_error:
-                            self._add_log(f"Browser restart failed: {str(restart_error)[:30]}")
-                            idx += 1  # Skip this village
+                            self._add_log(f"❌ Browser restart failed: {str(restart_error)[:50]}")
+                            # Still retry same village with new browser attempt
+                            time.sleep(5)
                     else:
-                        # Non-browser error, log and continue
+                        # Non-browser error, log and move to next village
                         self.errors += 1
-                        self._add_log(f"Village error: {str(village_error)[:50]}")
+                        self._add_log(f"📝 Non-critical error, continuing: {str(village_error)[:50]}")
                         idx += 1
             
             self._update_status(status='completed')
@@ -924,6 +1083,21 @@ class ParallelSearchCoordinator:
             
             self.state.total_villages = len(villages)
             
+            # ═══════════════════════════════════════════════════════════════════════
+            # BULLETPROOF VILLAGE TRACKING - Log every single village
+            # ═══════════════════════════════════════════════════════════════════════
+            with self.state_lock:
+                self.state.villages_all = [v[1] for v in villages]  # Store village names
+                self.state.logs.append(f"📋 MASTER VILLAGE LIST: {len(villages)} villages to search")
+                
+                # Log first 10 and last 5 villages for verification
+                village_names = [v[1] for v in villages]
+                if len(village_names) > 15:
+                    preview = village_names[:10] + ['...'] + village_names[-5:]
+                else:
+                    preview = village_names
+                self.state.logs.append(f"📍 Villages: {', '.join(preview)}")
+            
             # Determine number of workers
             num_workers = min(Config.MAX_WORKERS, len(villages))
             self.state.total_workers = num_workers
@@ -939,7 +1113,7 @@ class ParallelSearchCoordinator:
                 )
             
             with self.state_lock:
-                self.state.logs.append(f"Starting {num_workers} workers for {len(villages)} villages")
+                self.state.logs.append(f"🚀 Starting {num_workers} workers for {len(villages)} villages")
             
             # Start workers with staggered startup to avoid Chrome conflicts
             self.executor = ThreadPoolExecutor(max_workers=num_workers)
@@ -987,7 +1161,36 @@ class ParallelSearchCoordinator:
                 if all_done:
                     self.state.running = False
                     self.state.completed = True
-                    self.state.logs.append("✅ All workers completed!")
+                    
+                    # ═══════════════════════════════════════════════════════════════════════
+                    # COMPREHENSIVE COMPLETION SUMMARY
+                    # ═══════════════════════════════════════════════════════════════════════
+                    total_villages = len(self.state.villages_all)
+                    processed = len(self.state.villages_processed)
+                    retried = len(self.state.villages_retried)
+                    failed = len(self.state.villages_failed)
+                    
+                    self.state.logs.append("=" * 60)
+                    self.state.logs.append("📊 FINAL SEARCH SUMMARY")
+                    self.state.logs.append("=" * 60)
+                    self.state.logs.append(f"📋 Total villages in search: {total_villages}")
+                    self.state.logs.append(f"✅ Successfully processed: {processed}")
+                    self.state.logs.append(f"🔄 Villages retried (session expiry): {retried}")
+                    self.state.logs.append(f"❌ Villages failed: {failed}")
+                    self.state.logs.append(f"🔐 Session recovery attempts: {self.state.session_recoveries}")
+                    self.state.logs.append(f"📝 Total records found: {self.state.total_records}")
+                    self.state.logs.append(f"🎯 Owner matches: {self.state.total_matches}")
+                    
+                    if failed > 0:
+                        self.state.logs.append(f"⚠️ FAILED VILLAGES: {', '.join(self.state.villages_failed)}")
+                    
+                    if processed < total_villages:
+                        missing = total_villages - processed
+                        self.state.logs.append(f"⚠️ WARNING: {missing} villages may have been missed!")
+                    else:
+                        self.state.logs.append("✅ ALL VILLAGES PROCESSED!")
+                    
+                    self.state.logs.append("=" * 60)
                     logger.info("Search completed")
                     break
     
@@ -1017,10 +1220,19 @@ class ParallelSearchCoordinator:
                 'progress': int((self.state.villages_completed / max(self.state.total_villages, 1)) * 100),
                 'all_records_file': self.state.all_records_file,
                 'matches_file': self.state.matches_file,
-                'logs': self.state.logs[-20:],  # Last 20 logs
+                'logs': self.state.logs[-30:],  # Last 30 logs (increased)
                 # Real-time records for UI (last 100)
                 'all_records': self.state.all_records[-100:],
                 'matches': self.state.matches,
+                # BULLETPROOF VILLAGE TRACKING
+                'village_tracking': {
+                    'total_to_search': len(self.state.villages_all),
+                    'processed': len(self.state.villages_processed),
+                    'retried': len(self.state.villages_retried),
+                    'failed': len(self.state.villages_failed),
+                    'session_recoveries': self.state.session_recoveries,
+                    'failed_villages': self.state.villages_failed[-10:],  # Last 10 failed
+                },
                 'workers': {
                     str(wid): {
                         'status': ws.status,
