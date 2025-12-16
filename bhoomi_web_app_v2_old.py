@@ -66,7 +66,7 @@ class Config:
     
     # Search Settings - NO SURVEY SKIPPING
     DEFAULT_MAX_SURVEY = 200
-    EMPTY_SURVEY_THRESHOLD = 999999  # DISABLED - Check ALL surveys for 100% accuracy
+    EMPTY_SURVEY_THRESHOLD = 100  # High threshold to avoid premature skipping
     
     # Session Recovery Settings
     MAX_SESSION_RETRIES = 3  # Retry this many times on session expiry
@@ -1087,7 +1087,7 @@ class SearchWorker:
     def _extract_owners(self, page_source: str) -> List[dict]:
         """
         Extract owner details from page source.
-        FIXED: Now correctly filters out form elements and dropdowns.
+        IMPROVED for 100% accuracy - multiple extraction strategies.
         """
         from bs4 import BeautifulSoup
         import re
@@ -1096,90 +1096,56 @@ class SearchWorker:
         try:
             soup = BeautifulSoup(page_source, 'html.parser')
             
-            # CRITICAL FIX: Exclude form elements and dropdowns
-            # Remove all select dropdowns, form elements, and navigation before parsing
-            for unwanted in soup.find_all(['select', 'nav', 'header', 'footer', 'button', 'input']):
-                unwanted.decompose()
-            
-            # Strategy 1: Look for the RESULTS table (not the form table)
-            results_table = None
+            # Strategy 1: Look for tables with Owner/Extent keywords
             for table in soup.find_all('table'):
                 table_text = table.get_text()
-                table_html = str(table)
-                
-                # MUST have owner/extent keywords
-                has_owner_keywords = any(kw in table_text for kw in ['Owner', 'ಮಾಲೀಕರ', 'Extent', 'ವಿಸ್ತೀರ್ಣ', 'Khata', 'ಖಾತಾ'])
-                
-                # MUST NOT have form keywords (this filters out the search form table)
-                has_form_keywords = any(kw in table_text for kw in [
-                    'Select District', 'Select Taluk', 'Select Hobli', 'Select Village',
-                    'Select Survey', 'Select Surnoc', 'Select Hissa', 'Select Period',
-                    'Toggle navigation'
-                ])
-                
-                # MUST NOT contain select tags (double-check)
-                has_select_tags = 'select' in table_html.lower()
-                
-                # MUST have reasonable number of rows (results table has multiple rows)
-                num_rows = len(table.find_all('tr'))
-                
-                if has_owner_keywords and not has_form_keywords and not has_select_tags and num_rows >= 2:
-                    results_table = table
-                    break
+                if any(kw in table_text for kw in ['Owner', 'ಮಾಲೀಕರ', 'Extent', 'ವಿಸ್ತೀರ್ಣ', 'Khata', 'ಖಾತಾ']):
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cells = row.find_all(['td', 'th'])
+                        if len(cells) >= 2:
+                            cell_texts = [c.get_text(strip=True) for c in cells]
+                            row_text = ' '.join(cell_texts)
+                            
+                            # Multiple patterns to catch owner data
+                            # Pattern 1: Extent format like 0.12.0 or 1-2-3
+                            # Pattern 2: Rows with substantial text (likely names)
+                            has_extent = re.search(r'\d+[\.\-]\d+[\.\-]\d+', row_text)
+                            has_name = len(cell_texts[0]) > 2 and not cell_texts[0].isdigit()
+                            
+                            # Skip header rows
+                            is_header = any(h in row_text.lower() for h in ['owner', 'extent', 'sl.no', 'slno', 'ಮಾಲೀಕರ'])
+                            
+                            if (has_extent or has_name) and not is_header:
+                                owner_entry = {
+                                    'owner_name': cell_texts[0] if cell_texts else '',
+                                    'extent': cell_texts[1] if len(cell_texts) > 1 else '',
+                                    'khatah': cell_texts[2] if len(cell_texts) > 2 else '',
+                                }
+                                # Avoid duplicates
+                                if owner_entry['owner_name'] and owner_entry not in owners:
+                                    owners.append(owner_entry)
             
-            if not results_table:
-                self.logger.warning(f"No valid results table found in page")
-                return owners
-            
-            # Extract from the validated results table only
-            rows = results_table.find_all('tr')
-            for row in rows:
-                cells = row.find_all(['td', 'th'])
-                if len(cells) >= 2:
-                    cell_texts = [c.get_text(strip=True) for c in cells]
-                    row_text = ' '.join(cell_texts)
-                    
-                    # ADDITIONAL VALIDATION: Skip rows that look like form elements
-                    # Check for dropdown-style text patterns
-                    is_dropdown_option = any(pattern in row_text for pattern in [
-                        'Select ', 'Toggle ', 'District', 'Taluk', 'Hobli', 'Village',
-                        'Survey Number', 'Surnoc', 'Hissa', 'Period', 'Year'
-                    ])
-                    
-                    # Check for suspicious patterns (all caps district names in sequence)
-                    is_district_list = re.search(r'[A-Z]{5,}[A-Z]{5,}', row_text.replace(' ', ''))
-                    
-                    if is_dropdown_option or is_district_list:
-                        continue  # Skip this row - it's form data!
-                    
-                    # Multiple patterns to catch owner data
-                    # Pattern 1: Extent format like 0.12.0 or 1-2-3
-                    # Pattern 2: Rows with substantial text (likely names)
-                    has_extent = re.search(r'\d+[\.\-]\d+[\.\-]\d+', row_text)
-                    has_name = len(cell_texts[0]) > 2 and not cell_texts[0].isdigit()
-                    
-                    # Skip header rows
-                    is_header = any(h in row_text.lower() for h in ['owner', 'extent', 'sl.no', 'slno', 'ಮಾಲೀಕರ', 'ಸ್ಥಿತಿ'])
-                    
-                    # MUST have reasonable name length (not just numbers or single chars)
-                    has_valid_name = len(cell_texts[0]) >= 3 and not cell_texts[0].isdigit()
-                    
-                    if (has_extent or has_name) and not is_header and has_valid_name:
-                        owner_entry = {
-                            'owner_name': cell_texts[0] if cell_texts else '',
-                            'extent': cell_texts[1] if len(cell_texts) > 1 else '',
-                            'khatah': cell_texts[2] if len(cell_texts) > 2 else '',
-                        }
-                        # Avoid duplicates and validate owner name is not form text
-                        if (owner_entry['owner_name'] and 
-                            owner_entry not in owners and
-                            'Select' not in owner_entry['owner_name'] and
-                            len(owner_entry['owner_name']) >= 3):
-                            owners.append(owner_entry)
+            # Strategy 2: Look for specific div/span elements with owner info
+            if not owners:
+                # Try finding labeled sections
+                for label in soup.find_all(['label', 'span', 'div']):
+                    label_text = label.get_text(strip=True)
+                    if 'Owner' in label_text or 'ಮಾಲೀಕ' in label_text:
+                        # Get next sibling or parent's next element for the value
+                        next_elem = label.find_next(['span', 'div', 'td'])
+                        if next_elem:
+                            owner_name = next_elem.get_text(strip=True)
+                            if owner_name and len(owner_name) > 2:
+                                owners.append({
+                                    'owner_name': owner_name,
+                                    'extent': '',
+                                    'khatah': ''
+                                })
             
             # Log extraction result for debugging
             if not owners:
-                self.logger.warning(f"No owners extracted from validated table")
+                self.logger.warning(f"No owners extracted from page")
                 
         except Exception as e:
             self.logger.error(f"Extract error: {e}")
@@ -1343,8 +1309,8 @@ class SearchWorker:
                                     time.sleep(Config.POST_SELECT_WAIT)
                                     
                                     # ═══════════════════════════════════════════════════════════════════════
-                                    # OPTIMIZED: Select only the LATEST available period
-                                    # This reduces errors and speeds up processing significantly
+                                    # ACCURACY FIX: Process ALL PERIODS, not just the first one!
+                                    # Each period can have different owners - we need them all!
                                     # ═══════════════════════════════════════════════════════════════════════
                                     period_sel = Select(self.driver.find_element(By.ID, IDS['period']))
                                     period_opts = [o.text for o in period_sel.options if "Select" not in o.text]
@@ -1353,16 +1319,10 @@ class SearchWorker:
                                         self._add_log(f"⚠️ No periods for Sy:{survey_no} H:{hissa}")
                                         break  # Move to next hissa
                                     
-                                    # Try to select the latest available period (first in list)
-                                    # If disabled, try next ones until we find an enabled period
-                                    period_selected = False
-                                    max_period_attempts = min(5, len(period_opts))  # Try up to 5 periods
-                                    
-                                    for period_idx in range(max_period_attempts):
+                                    # Process EACH period for complete historical data
+                                    for period in period_opts:
                                         if not self.state.running:
                                             return
-                                        
-                                        period = period_opts[period_idx]
                                         
                                         try:
                                             period_sel = Select(self.driver.find_element(By.ID, IDS['period']))
@@ -1378,10 +1338,6 @@ class SearchWorker:
                                             page_source = self.driver.page_source
                                             if 'Session expired' in page_source or 'login again' in page_source.lower():
                                                 raise Exception("Session expired during fetch")
-                                            
-                                            # Successfully selected period - log it
-                                            self._add_log(f"✓ Sy:{survey_no} H:{hissa} Using period: {period[:30]}")
-                                            period_selected = True
                                             
                                             # Extract owners
                                             owners = self._extract_owners(page_source)
@@ -1427,23 +1383,11 @@ class SearchWorker:
                                                     with self.state_lock:
                                                         self.state.matches.append(record_dict)
                                                     self._add_log(f"🎯 MATCH: {owner['owner_name']} in {village_name} Sy:{survey_no}")
-                                            
-                                            # Successfully processed this period - stop trying others
-                                            break
                                         
                                         except Exception as period_error:
-                                            # This period is disabled, try the next one
-                                            if period_idx < max_period_attempts - 1:
-                                                # Silently continue to next period (no need to log every disabled period)
-                                                continue
-                                            else:
-                                                # Last attempt failed - log it
-                                                self._add_log(f"⚠️ All periods disabled for Sy:{survey_no} H:{hissa}")
-                                                self.errors += 1
-                                    
-                                    if not period_selected:
-                                        # No period could be selected - log and continue
-                                        self._add_log(f"⚠️ No available period for Sy:{survey_no} H:{hissa}")
+                                            # Log period error but continue to next period
+                                            self._add_log(f"⚠️ Period error Sy:{survey_no} H:{hissa} P:{period}: {str(period_error)[:30]}")
+                                            self.errors += 1
                                     
                                     # Update stats after processing all periods for this hissa
                                     self._update_status(

@@ -1,0 +1,1807 @@
+{
+  "owner_to_search": "ಚೌಡೆ ಬೈರೆ ಗೌಡ",
+  "district": {
+    "code": "21",
+    "name": "BANGALORE RURAL"
+  },
+  "taluk": {
+    "code": "4",
+    "name": "HOSKOTE"
+  },
+  "hoblis": [
+    {
+      "code": "1",
+      "name": "ಕಸಬಾ",
+      "villages": [
+        {
+          "code": "1",
+          "name_kn": "ದೊಡ್ಡಗಟ್ಟಿಗನಬ್ಬೆ",
+          "name_en": "",
+          "lgd_code": "625710"
+        },
+        {
+          "code": "2",
+          "name_kn": "ಪೂಜೇನಅಗ್ರಹಾರ",
+          "name_en": "",
+          "lgd_code": "625716"
+        },
+        {
+          "code": "3",
+          "name_kn": "ಚಿಕ್ಕಗಟ್ಟಿಗನಬ್ಬೆ",
+          "name_en": "",
+          "lgd_code": "625717"
+        },
+        {
+          "code": "4",
+          "name_kn": "ಸರ್ಕಾರ ಗುಟ್ಟಗನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625709"
+        },
+        {
+          "code": "5",
+          "name_kn": "ಅಮಾನಿದೊಡ್ಡಕೆರೆ",
+          "name_en": "",
+          "lgd_code": "625708"
+        },
+        {
+          "code": "6",
+          "name_kn": "ಗಣಗಲು",
+          "name_en": "",
+          "lgd_code": "625706"
+        },
+        {
+          "code": "7",
+          "name_kn": "ಪೆತ್ತನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625707"
+        },
+        {
+          "code": "8",
+          "name_kn": "ಚೀಮಂಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625718"
+        },
+        {
+          "code": "9",
+          "name_kn": "ಹೊಸಕೋಟೆ",
+          "name_en": "",
+          "lgd_code": "938777"
+        },
+        {
+          "code": "10",
+          "name_kn": "ಮಲ್ಲಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625712"
+        },
+        {
+          "code": "11",
+          "name_kn": "ನಡುವತ್ತಿ",
+          "name_en": "",
+          "lgd_code": "625715"
+        },
+        {
+          "code": "12",
+          "name_kn": "ಭಕ್ತರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625711"
+        },
+        {
+          "code": "13",
+          "name_kn": "ಅಪ್ಪಾಜಿಪುರ",
+          "name_en": "",
+          "lgd_code": "625714"
+        },
+        {
+          "code": "14",
+          "name_kn": "ಕುಂಬಳಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625687"
+        },
+        {
+          "code": "15",
+          "name_kn": "ಸೊಣ್ಣದೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625691"
+        },
+        {
+          "code": "16",
+          "name_kn": "ಸೋಂಪುರ",
+          "name_en": "",
+          "lgd_code": "625690"
+        },
+        {
+          "code": "17",
+          "name_kn": "ಉಪ್ಪಾರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625685"
+        },
+        {
+          "code": "18",
+          "name_kn": "ಕುರುಬರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625689"
+        },
+        {
+          "code": "19",
+          "name_kn": "ಕಲ್ಲಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625688"
+        },
+        {
+          "code": "20",
+          "name_kn": "ಅಮಾನಿಚಿಕ್ಕಕೆರೆ",
+          "name_en": "",
+          "lgd_code": "625686"
+        },
+        {
+          "code": "21",
+          "name_kn": "ಕೊಳತೂರು",
+          "name_en": "",
+          "lgd_code": "625704"
+        },
+        {
+          "code": "22",
+          "name_kn": "ದಾಸರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625701"
+        },
+        {
+          "code": "23",
+          "name_kn": "ಹಲಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625702"
+        },
+        {
+          "code": "24",
+          "name_kn": "ದಂಡುಪಾಳ್ಯ",
+          "name_en": "",
+          "lgd_code": "938776"
+        },
+        {
+          "code": "25",
+          "name_kn": "ವರದಾಪುರ",
+          "name_en": "",
+          "lgd_code": "938778"
+        },
+        {
+          "code": "26",
+          "name_kn": "ಕಣ್ಣೂರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625705"
+        },
+        {
+          "code": "27",
+          "name_kn": "ಆಲಪ್ಪನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625684"
+        },
+        {
+          "code": "28",
+          "name_kn": "ಶಂಕಣೀಪುರ",
+          "name_en": "",
+          "lgd_code": "625683"
+        },
+        {
+          "code": "29",
+          "name_kn": "ಲಕ್ಕೊಂಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625681"
+        },
+        {
+          "code": "30",
+          "name_kn": "ವಾಬಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625682"
+        },
+        {
+          "code": "31",
+          "name_kn": "ದೊಡ್ಡಹುಲ್ಲೂರು",
+          "name_en": "",
+          "lgd_code": "625693"
+        },
+        {
+          "code": "32",
+          "name_kn": "ಚಿಕ್ಕಹುಲ್ಲೂರು",
+          "name_en": "",
+          "lgd_code": "625694"
+        },
+        {
+          "code": "33",
+          "name_kn": "ಚೊಕ್ಕಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625695"
+        },
+        {
+          "code": "34",
+          "name_kn": "ಪಿಲ್ಲಗುಂಪೆ",
+          "name_en": "",
+          "lgd_code": "625700"
+        },
+        {
+          "code": "35",
+          "name_kn": "ಚೋಳಪ್ಪನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625696"
+        },
+        {
+          "code": "36",
+          "name_kn": "ಮಲ್ಲಿಮಾಕನಪುರ",
+          "name_en": "",
+          "lgd_code": "625697"
+        },
+        {
+          "code": "37",
+          "name_kn": "ಚಿಕ್ಕನಲ್ಲೂರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625699"
+        },
+        {
+          "code": "38",
+          "name_kn": "ದಾಸರತಿಮ್ಮನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625698"
+        },
+        {
+          "code": "39",
+          "name_kn": "ಯಳಚನಾಯ್ಕನಪುರ",
+          "name_en": "",
+          "lgd_code": "625692"
+        },
+        {
+          "code": "40",
+          "name_kn": "ಹುಲ್ಲೂರು ಅಮಾನಿಕೆರೆಲ",
+          "name_en": "",
+          "lgd_code": "625703"
+        },
+        {
+          "code": "41",
+          "name_kn": "ಕೊರಳೂರು",
+          "name_en": "",
+          "lgd_code": "625713"
+        }
+      ]
+    },
+    {
+      "code": "2",
+      "name": "ಅನುಗೊಂಡನಹಳ್ಳಿ",
+      "villages": [
+        {
+          "code": "1",
+          "name_kn": "ಅನುಗೊಂಡನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625730"
+        },
+        {
+          "code": "2",
+          "name_kn": "ಓಬಳಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625729"
+        },
+        {
+          "code": "3",
+          "name_kn": "ಮುತ್ಕೂರು",
+          "name_en": "",
+          "lgd_code": "625741"
+        },
+        {
+          "code": "4",
+          "name_kn": "ಯಡಗೊಂಡನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625742"
+        },
+        {
+          "code": "5",
+          "name_kn": "ಬ್ಯಾಲಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625740"
+        },
+        {
+          "code": "6",
+          "name_kn": "ಮುತ್ತುಕದಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625751"
+        },
+        {
+          "code": "7",
+          "name_kn": "ನಾಗನಾಯ್ಕನಕೋಟೆ",
+          "name_en": "",
+          "lgd_code": "625732"
+        },
+        {
+          "code": "8",
+          "name_kn": "ಸಮೇತನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625720"
+        },
+        {
+          "code": "9",
+          "name_kn": "ತಿರುಮಲಶೆಟ್ಟಿಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625719"
+        },
+        {
+          "code": "10",
+          "name_kn": "ಹೆಮ್ಮಂಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625731"
+        },
+        {
+          "code": "11",
+          "name_kn": "ಭೋದನಹೊಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625721"
+        },
+        {
+          "code": "12",
+          "name_kn": "ದೊಡ್ಡದುನ್ನಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625722"
+        },
+        {
+          "code": "13",
+          "name_kn": "ಗಣಗಲೂರು",
+          "name_en": "",
+          "lgd_code": "625759"
+        },
+        {
+          "code": "14",
+          "name_kn": "ಬಾಗೂರು",
+          "name_en": "",
+          "lgd_code": "625754"
+        },
+        {
+          "code": "15",
+          "name_kn": "ಗುಂಡೂರು",
+          "name_en": "",
+          "lgd_code": "625755"
+        },
+        {
+          "code": "16",
+          "name_kn": "ಸಿದ್ದನಪುರ",
+          "name_en": "",
+          "lgd_code": "625756"
+        },
+        {
+          "code": "17",
+          "name_kn": "ಶಿವನಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625757"
+        },
+        {
+          "code": "18",
+          "name_kn": "ಮಾರಂಗೆರೆ",
+          "name_en": "",
+          "lgd_code": "625758"
+        },
+        {
+          "code": "19",
+          "name_kn": "ತತ್ತನೂರು",
+          "name_en": "",
+          "lgd_code": "625752"
+        },
+        {
+          "code": "20",
+          "name_kn": "ತಿರುವರಂಗ",
+          "name_en": "",
+          "lgd_code": "625753"
+        },
+        {
+          "code": "21",
+          "name_kn": "ಮುತ್ಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625738"
+        },
+        {
+          "code": "22",
+          "name_kn": "ಬೆಳ್ಳಿಕೆರೆ",
+          "name_en": "",
+          "lgd_code": "625739"
+        },
+        {
+          "code": "23",
+          "name_kn": "ಕೋಟೂರು",
+          "name_en": "",
+          "lgd_code": "625736"
+        },
+        {
+          "code": "24",
+          "name_kn": "ತಿಮ್ಮಂಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625734"
+        },
+        {
+          "code": "25",
+          "name_kn": "ಹಾರೋಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625733"
+        },
+        {
+          "code": "26",
+          "name_kn": "ಅಜಗೊಂಡನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625735"
+        },
+        {
+          "code": "27",
+          "name_kn": "ಗುಳ್ಳಕಾಯಿಪುರ",
+          "name_en": "",
+          "lgd_code": "625737"
+        },
+        {
+          "code": "28",
+          "name_kn": "ದೇವನಗೊಂದಿ",
+          "name_en": "",
+          "lgd_code": "625724"
+        },
+        {
+          "code": "29",
+          "name_kn": "ಲಿಂಗಧೀರಮಲ್ಲಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625725"
+        },
+        {
+          "code": "30",
+          "name_kn": "ಡಿ.ಹೊಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625728"
+        },
+        {
+          "code": "31",
+          "name_kn": "ಸೋಮ್ಲಪುರ",
+          "name_en": "",
+          "lgd_code": "625726"
+        },
+        {
+          "code": "32",
+          "name_kn": "ಮೇಡಿಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625727"
+        },
+        {
+          "code": "33",
+          "name_kn": "ದೇವಲಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625723"
+        },
+        {
+          "code": "34",
+          "name_kn": "ಬಸಬತ್ತನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625746"
+        },
+        {
+          "code": "35",
+          "name_kn": "ಮೇಡಿಮಲ್ಲಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625744"
+        },
+        {
+          "code": "36",
+          "name_kn": "ಹಂದೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625745"
+        },
+        {
+          "code": "37",
+          "name_kn": "ಬಾಣಾರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625747"
+        },
+        {
+          "code": "38",
+          "name_kn": "ಅರೇಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625750"
+        },
+        {
+          "code": "39",
+          "name_kn": "ಕಲ್ಕುಂಟೆಅಗ್ರಹಾರ",
+          "name_en": "",
+          "lgd_code": "625749"
+        },
+        {
+          "code": "40",
+          "name_kn": "ನಾರಾಯಣಕೆರೆ",
+          "name_en": "",
+          "lgd_code": "625748"
+        },
+        {
+          "code": "41",
+          "name_kn": "ಬೈರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625743"
+        },
+        {
+          "code": "42",
+          "name_kn": "ತಿಮ್ಮಂಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625734"
+        }
+      ]
+    },
+    {
+      "code": "3",
+      "name": "ಜಡಿಗೇನಹಳ್ಳಿ",
+      "villages": [
+        {
+          "code": "1",
+          "name_kn": "ಜಡಿಗೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625646"
+        },
+        {
+          "code": "2",
+          "name_kn": "ಕರಿಬೀರನಹೊಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625653"
+        },
+        {
+          "code": "3",
+          "name_kn": "ಹರಳೂರು",
+          "name_en": "",
+          "lgd_code": "625647"
+        },
+        {
+          "code": "4",
+          "name_kn": "ಚಂದ್ರಾಪುರ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625651"
+        },
+        {
+          "code": "5",
+          "name_kn": "ಅರಳೇಮಾಕನಹಳ್ಳಿ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625649"
+        },
+        {
+          "code": "6",
+          "name_kn": "ಭಕ್ತಗೊಂಡನಹಳ್ಳಿ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625654"
+        },
+        {
+          "code": "7",
+          "name_kn": "ವಿಜಯಪುರ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625655"
+        },
+        {
+          "code": "8",
+          "name_kn": "ದೊಡ್ಡನಲ್ಲಾಳ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625623"
+        },
+        {
+          "code": "9",
+          "name_kn": "ಗೂಗುಟ್ಟಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625624"
+        },
+        {
+          "code": "10",
+          "name_kn": "ಚಿಕ್ಕನಲ್ಲಾಳ",
+          "name_en": "",
+          "lgd_code": "625611"
+        },
+        {
+          "code": "11",
+          "name_kn": "ಅಲಗೊಂಡನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625628"
+        },
+        {
+          "code": "12",
+          "name_kn": "ಹಲವಸಿನಕಾಯಿಪುರ",
+          "name_en": "",
+          "lgd_code": "625613"
+        },
+        {
+          "code": "13",
+          "name_kn": "ದಬ್ಬಗುಂಟೆ",
+          "name_en": "",
+          "lgd_code": "625612"
+        },
+        {
+          "code": "14",
+          "name_kn": "ದೊಡ್ಡದೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625627"
+        },
+        {
+          "code": "15",
+          "name_kn": "ಯಳಚಾಮನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625629"
+        },
+        {
+          "code": "16",
+          "name_kn": "ತಿಮ್ಮಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625625"
+        },
+        {
+          "code": "17",
+          "name_kn": "ಉಮ್ಮಲು",
+          "name_en": "",
+          "lgd_code": "625626"
+        },
+        {
+          "code": "18",
+          "name_kn": "ಹೊಣಚನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625677"
+        },
+        {
+          "code": "19",
+          "name_kn": "ತಿಂಡ್ಲು",
+          "name_en": "",
+          "lgd_code": "625674"
+        },
+        {
+          "code": "20",
+          "name_kn": "ಕಾಮರಸನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625678"
+        },
+        {
+          "code": "21",
+          "name_kn": "ಕುರುಬರಗೊಲ್ಲಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625658"
+        },
+        {
+          "code": "22",
+          "name_kn": "ಗೋವಿಂದಪುರ",
+          "name_en": "",
+          "lgd_code": "625659"
+        },
+        {
+          "code": "23",
+          "name_kn": "ಪರಮನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625671"
+        },
+        {
+          "code": "24",
+          "name_kn": "ಬನಹಳ್ಳಿ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625675"
+        },
+        {
+          "code": "25",
+          "name_kn": "ಕಟ್ಟಿಗೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625656"
+        },
+        {
+          "code": "26",
+          "name_kn": "ಬೊಮ್ಮನಬಂಡೆ",
+          "name_en": "",
+          "lgd_code": "625679"
+        },
+        {
+          "code": "27",
+          "name_kn": "ಖಾಜಿಹೊಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625676"
+        },
+        {
+          "code": "28",
+          "name_kn": "ದೇವರಗೊಲ್ಲಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625680"
+        },
+        {
+          "code": "29",
+          "name_kn": "ಮಾರಗೊಂಡನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625657"
+        },
+        {
+          "code": "30",
+          "name_kn": "ಮುಗಬಾಳ",
+          "name_en": "",
+          "lgd_code": "625608"
+        },
+        {
+          "code": "31",
+          "name_kn": "ಮುಗಬಾಳ ಹೊಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625615"
+        },
+        {
+          "code": "32",
+          "name_kn": "ಚನ್ನಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625618"
+        },
+        {
+          "code": "33",
+          "name_kn": "ಪೂಜಾರಾಮನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625609"
+        },
+        {
+          "code": "34",
+          "name_kn": "ಮೈಲಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625616"
+        },
+        {
+          "code": "35",
+          "name_kn": "ದೊಡ್ಡನಲ್ಲೂರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625606"
+        },
+        {
+          "code": "36",
+          "name_kn": "ನಕ್ಕನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625607"
+        },
+        {
+          "code": "37",
+          "name_kn": "ವಳಗೆರೆಪುರ",
+          "name_en": "",
+          "lgd_code": "625617"
+        },
+        {
+          "code": "38",
+          "name_kn": "ಚೆನ್ನಂಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625610"
+        },
+        {
+          "code": "39",
+          "name_kn": "ವೀರಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625614"
+        },
+        {
+          "code": "40",
+          "name_kn": "ಓರೋಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625639"
+        },
+        {
+          "code": "41",
+          "name_kn": "ತಗ್ಗಲಿಹೊಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625642"
+        },
+        {
+          "code": "42",
+          "name_kn": "ಅಂಬಲೀಪುರ",
+          "name_en": "",
+          "lgd_code": "625633"
+        },
+        {
+          "code": "43",
+          "name_kn": "ಇಂಜನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625632"
+        },
+        {
+          "code": "44",
+          "name_kn": "ಅಪ್ಪಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625631"
+        },
+        {
+          "code": "45",
+          "name_kn": "ದೊಡ್ಡತಗ್ಗಲಿ",
+          "name_en": "",
+          "lgd_code": "625640"
+        },
+        {
+          "code": "46",
+          "name_kn": "ಚಿಕ್ಕತಗ್ಗಲಿ",
+          "name_en": "",
+          "lgd_code": "625641"
+        },
+        {
+          "code": "47",
+          "name_kn": "ಗೊಣಕನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625644"
+        },
+        {
+          "code": "48",
+          "name_kn": "ತಿರಟಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625643"
+        },
+        {
+          "code": "49",
+          "name_kn": "ಬೆಳಮಂಗಳ",
+          "name_en": "",
+          "lgd_code": "625645"
+        },
+        {
+          "code": "50",
+          "name_kn": "ನಿಢಘಟ್ಟ",
+          "name_en": "",
+          "lgd_code": "625621"
+        },
+        {
+          "code": "51",
+          "name_kn": "ಗೊಟ್ಟಪುರ",
+          "name_en": "",
+          "lgd_code": "625619"
+        },
+        {
+          "code": "52",
+          "name_kn": "ಅತ್ತಿನಟ್ಟ",
+          "name_en": "",
+          "lgd_code": "625635"
+        },
+        {
+          "code": "53",
+          "name_kn": "ಅಟ್ಟೂರು",
+          "name_en": "",
+          "lgd_code": "625620"
+        },
+        {
+          "code": "54",
+          "name_kn": "ತವಟಹಳ್ಳಿ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625634"
+        },
+        {
+          "code": "55",
+          "name_kn": "ಸೋಲೂರು",
+          "name_en": "",
+          "lgd_code": "625636"
+        },
+        {
+          "code": "56",
+          "name_kn": "ಮಟ್ಟಹಳ್ಳಿ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625637"
+        },
+        {
+          "code": "57",
+          "name_kn": "ವಾಗಟ",
+          "name_en": "",
+          "lgd_code": "625660"
+        },
+        {
+          "code": "58",
+          "name_kn": "ವಡಿಗೇಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625652"
+        },
+        {
+          "code": "59",
+          "name_kn": "ಜಿನ್ನಾಗರ",
+          "name_en": "",
+          "lgd_code": "625662"
+        },
+        {
+          "code": "60",
+          "name_kn": "ಮಾಕನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625669"
+        },
+        {
+          "code": "61",
+          "name_kn": "ದೊಡ್ಡದಾಸರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625670"
+        },
+        {
+          "code": "62",
+          "name_kn": "ಕಣೀಕಲ್ಲು",
+          "name_en": "",
+          "lgd_code": "625667"
+        },
+        {
+          "code": "63",
+          "name_kn": "ತರಬಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625672"
+        },
+        {
+          "code": "64",
+          "name_kn": "ಹುಣಸೇಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625668"
+        },
+        {
+          "code": "65",
+          "name_kn": "ಕೋಡಿಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625664"
+        },
+        {
+          "code": "66",
+          "name_kn": "ಬಿಸನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625665"
+        },
+        {
+          "code": "67",
+          "name_kn": "ದೇವಶೆಟ್ಟಿಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625663"
+        },
+        {
+          "code": "68",
+          "name_kn": "ಕಾಚರಕನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625666"
+        },
+        {
+          "code": "69",
+          "name_kn": "ವಾಗಟಅಗ್ರಹಾರ",
+          "name_en": "",
+          "lgd_code": "625661"
+        }
+      ]
+    },
+    {
+      "code": "4",
+      "name": "ಸೂಲಿಬೆಲೆ",
+      "villages": [
+        {
+          "code": "1",
+          "name_kn": "ಸೂಲಿಬೆಲೆ",
+          "name_en": "",
+          "lgd_code": "625491"
+        },
+        {
+          "code": "2",
+          "name_kn": "ಕದರನಪುರ",
+          "name_en": "",
+          "lgd_code": "625490"
+        },
+        {
+          "code": "3",
+          "name_kn": "ರಾಂಪುರ",
+          "name_en": "",
+          "lgd_code": "625489"
+        },
+        {
+          "code": "4",
+          "name_kn": "ಅಂಕೋನಹಲ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625581"
+        },
+        {
+          "code": "5",
+          "name_kn": "ಅರಸನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625488"
+        },
+        {
+          "code": "6",
+          "name_kn": "ನಲ್ಲಾಗನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625486"
+        },
+        {
+          "code": "7",
+          "name_kn": "ಬೆಟ್ಟಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625506"
+        },
+        {
+          "code": "8",
+          "name_kn": "ಗಿಡ್ಡಪ್ಪನಹಳ್ಲಿ",
+          "name_en": "",
+          "lgd_code": "625507"
+        },
+        {
+          "code": "9",
+          "name_kn": "ಒಳಗೆರೆಪುರ",
+          "name_en": "",
+          "lgd_code": "625509"
+        },
+        {
+          "code": "10",
+          "name_kn": "ಕೆ.ಕೆ.ಬೀಡು",
+          "name_en": "",
+          "lgd_code": "625482"
+        },
+        {
+          "code": "11",
+          "name_kn": "ಕೋಡಿಪುರ",
+          "name_en": "",
+          "lgd_code": "625508"
+        },
+        {
+          "code": "12",
+          "name_kn": "ಚೌಡಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625504"
+        },
+        {
+          "code": "13",
+          "name_kn": "ವೆಂಕಟೇಶಪುರ",
+          "name_en": "",
+          "lgd_code": "625524"
+        },
+        {
+          "code": "14",
+          "name_kn": "ಬತ್ತಿಗಾನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625485"
+        },
+        {
+          "code": "15",
+          "name_kn": "ಬೇಗೂರು",
+          "name_en": "",
+          "lgd_code": "625529"
+        },
+        {
+          "code": "16",
+          "name_kn": "ಬೀಮಕ್ಕನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625533"
+        },
+        {
+          "code": "17",
+          "name_kn": "ಸೊಣ್ಣೇಬೈಚನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625530"
+        },
+        {
+          "code": "18",
+          "name_kn": "ಮುತ್ತಕದಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625528"
+        },
+        {
+          "code": "19",
+          "name_kn": "ಚಿಕ್ಕಕೋಲಿಗ",
+          "name_en": "",
+          "lgd_code": "625526"
+        },
+        {
+          "code": "20",
+          "name_kn": "ದೊಡ್ಡಕೋಲಿಗ",
+          "name_en": "",
+          "lgd_code": "625527"
+        },
+        {
+          "code": "21",
+          "name_kn": "ಬಾಗಲೂರು",
+          "name_en": "",
+          "lgd_code": "625531"
+        },
+        {
+          "code": "22",
+          "name_kn": "ಗುಳ್ಳಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625503"
+        },
+        {
+          "code": "23",
+          "name_kn": "ನಗರೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625525"
+        },
+        {
+          "code": "24",
+          "name_kn": "ಗುಂಡ್ರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625532"
+        },
+        {
+          "code": "25",
+          "name_kn": "ವನಮನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625505"
+        },
+        {
+          "code": "26",
+          "name_kn": "ಕಂಬಳಿಪುರ",
+          "name_en": "",
+          "lgd_code": "625521"
+        },
+        {
+          "code": "27",
+          "name_kn": "ಎಂ.ಸತ್ಯವಾರ",
+          "name_en": "",
+          "lgd_code": "625514"
+        },
+        {
+          "code": "28",
+          "name_kn": "ಸೊಣ್ಣಹಳ್ಳಿಪುರ",
+          "name_en": "",
+          "lgd_code": "625519"
+        },
+        {
+          "code": "29",
+          "name_kn": "ಮುತ್ಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625523"
+        },
+        {
+          "code": "30",
+          "name_kn": "ಎಕರಾಜಪುರ",
+          "name_en": "",
+          "lgd_code": "625522"
+        },
+        {
+          "code": "31",
+          "name_kn": "ಕೆಂಪಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625520"
+        },
+        {
+          "code": "32",
+          "name_kn": "ಹಸಿಗಾಳ",
+          "name_en": "",
+          "lgd_code": "625516"
+        },
+        {
+          "code": "33",
+          "name_kn": "ಕಮ್ಮಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625515"
+        },
+        {
+          "code": "34",
+          "name_kn": "ತಿಮ್ಮಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625517"
+        },
+        {
+          "code": "35",
+          "name_kn": "ಶಿವದೇನಹಲ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625518"
+        },
+        {
+          "code": "36",
+          "name_kn": "ಬೆಂಡಿಗಾನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625480"
+        },
+        {
+          "code": "37",
+          "name_kn": "ತಿಮ್ಮಪ್ಪನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625465"
+        },
+        {
+          "code": "38",
+          "name_kn": "ಬಾಲೇನಹಳ್ಲಿ",
+          "name_en": "",
+          "lgd_code": "625477"
+        },
+        {
+          "code": "39",
+          "name_kn": "ದ್ಯಾವಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625479"
+        },
+        {
+          "code": "40",
+          "name_kn": "ತೆನೆಯೂರು",
+          "name_en": "",
+          "lgd_code": "625466"
+        },
+        {
+          "code": "41",
+          "name_kn": "ಚಿಕ್ಕರಳಗೆರೆ",
+          "name_en": "",
+          "lgd_code": "625481"
+        },
+        {
+          "code": "42",
+          "name_kn": "ಐಮನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625468"
+        },
+        {
+          "code": "43",
+          "name_kn": "ಮಟಬಾರ್ಲು",
+          "name_en": "",
+          "lgd_code": "625483"
+        },
+        {
+          "code": "44",
+          "name_kn": "ಹನಿಯೂರು",
+          "name_en": "",
+          "lgd_code": "625478"
+        },
+        {
+          "code": "45",
+          "name_kn": "ಚಿಕ್ಕಕುರುಬರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625467"
+        },
+        {
+          "code": "46",
+          "name_kn": "ದೊಡ್ಡಅರಳಗೆರೆ",
+          "name_en": "",
+          "lgd_code": "625494"
+        },
+        {
+          "code": "47",
+          "name_kn": "ಸಿದ್ದೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625492"
+        },
+        {
+          "code": "48",
+          "name_kn": "ಭಾವಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625499"
+        },
+        {
+          "code": "49",
+          "name_kn": "ಹೊಸದಂಬಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625500"
+        },
+        {
+          "code": "50",
+          "name_kn": "ಭುವನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625501"
+        },
+        {
+          "code": "51",
+          "name_kn": "ಟಿ.ಅಗ್ರಹಾರ",
+          "name_en": "",
+          "lgd_code": "625497"
+        },
+        {
+          "code": "52",
+          "name_kn": "ಸಸಿಮಾಕನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625495"
+        },
+        {
+          "code": "53",
+          "name_kn": "ತಮ್ಮರಸನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625493"
+        },
+        {
+          "code": "54",
+          "name_kn": "ಅಮಾನಿಅರಳಗೆರೆ",
+          "name_en": "",
+          "lgd_code": "625496"
+        },
+        {
+          "code": "55",
+          "name_kn": "ಪುಲಮುಂಚಿ",
+          "name_en": "",
+          "lgd_code": "625502"
+        },
+        {
+          "code": "56",
+          "name_kn": "ಶ್ರೀನಿವಾಸಪುರ",
+          "name_en": "",
+          "lgd_code": "625498"
+        },
+        {
+          "code": "57",
+          "name_kn": "ಈ.ಅಮಾನಿಕೆರೆ",
+          "name_en": "",
+          "lgd_code": "625471"
+        },
+        {
+          "code": "58",
+          "name_kn": "ಶಿವಪುರ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625469"
+        },
+        {
+          "code": "59",
+          "name_kn": "ದಿಂಬಹಳ್ಳಿ (ಬೆ)",
+          "name_en": "",
+          "lgd_code": "625476"
+        },
+        {
+          "code": "60",
+          "name_kn": "ಈ.ಹೊಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625472"
+        },
+        {
+          "code": "61",
+          "name_kn": "ಅನುಪಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625470"
+        },
+        {
+          "code": "62",
+          "name_kn": "ರಾಳಕುಂಟೆ",
+          "name_en": "",
+          "lgd_code": "625473"
+        },
+        {
+          "code": "63",
+          "name_kn": "ಚೀಮಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625475"
+        },
+        {
+          "code": "64",
+          "name_kn": "ಅತ್ತಿಬೆಲೆ",
+          "name_en": "",
+          "lgd_code": "625510"
+        },
+        {
+          "code": "65",
+          "name_kn": "ಎತ್ತಿನವಡೆಯಪುರ",
+          "name_en": "",
+          "lgd_code": "625512"
+        },
+        {
+          "code": "66",
+          "name_kn": "ಸಾದಪ್ಪನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625513"
+        },
+        {
+          "code": "67",
+          "name_kn": "ಯನಗುಂಟೆ",
+          "name_en": "",
+          "lgd_code": "625511"
+        },
+        {
+          "code": "68",
+          "name_kn": "ಶಾಂತನಪುರ",
+          "name_en": "",
+          "lgd_code": "625484"
+        },
+        {
+          "code": "69",
+          "name_kn": "ಈಸ್ತೂರು",
+          "name_en": "",
+          "lgd_code": "625474"
+        }
+      ]
+    },
+    {
+      "code": "5",
+      "name": "ನಂದಗುಡಿ",
+      "villages": [
+        {
+          "code": "1",
+          "name_kn": "ನಂದಗುಡಿ",
+          "name_en": "",
+          "lgd_code": "625550"
+        },
+        {
+          "code": "2",
+          "name_kn": "ಚೊಕ್ಕಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625564"
+        },
+        {
+          "code": "3",
+          "name_kn": "ಗಿಡ್ನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625551"
+        },
+        {
+          "code": "4",
+          "name_kn": "ಹೆತ್ತಕ್ಕಿ",
+          "name_en": "",
+          "lgd_code": "625597"
+        },
+        {
+          "code": "5",
+          "name_kn": "ಸತ್ತಿಗಾನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625570"
+        },
+        {
+          "code": "6",
+          "name_kn": "ಬಂಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625571"
+        },
+        {
+          "code": "7",
+          "name_kn": "ಓಬಳಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625573"
+        },
+        {
+          "code": "8",
+          "name_kn": "ಮಾರಸಂಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625599"
+        },
+        {
+          "code": "9",
+          "name_kn": "ಹುಳುವನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625572"
+        },
+        {
+          "code": "10",
+          "name_kn": "ಅಗಸರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625598"
+        },
+        {
+          "code": "11",
+          "name_kn": "ಲಿಂಗಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625595"
+        },
+        {
+          "code": "12",
+          "name_kn": "ಬೀರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625596"
+        },
+        {
+          "code": "13",
+          "name_kn": "ಕೋಳಾಳ ಚೆನ್ನೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625601"
+        },
+        {
+          "code": "14",
+          "name_kn": "ಗುಡ್ಡದಚಿನ್ನೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625602"
+        },
+        {
+          "code": "15",
+          "name_kn": "ಇಟ್ಟಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625534"
+        },
+        {
+          "code": "16",
+          "name_kn": "ರಾಮಗೋವಿಂದಪುರ",
+          "name_en": "",
+          "lgd_code": "625549"
+        },
+        {
+          "code": "17",
+          "name_kn": "ಬನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625547"
+        },
+        {
+          "code": "18",
+          "name_kn": "ಗೆದ್ದಲಹಳ್ಳಿಪುರ",
+          "name_en": "",
+          "lgd_code": "625548"
+        },
+        {
+          "code": "19",
+          "name_kn": "ನೆಲವಾಗಿಲು",
+          "name_en": "",
+          "lgd_code": "625544"
+        },
+        {
+          "code": "20",
+          "name_kn": "ಸರಕನೂರು",
+          "name_en": "",
+          "lgd_code": "625545"
+        },
+        {
+          "code": "21",
+          "name_kn": "ಎತ್ತಿನವಡೆಯಪುರ",
+          "name_en": "",
+          "lgd_code": "625543"
+        },
+        {
+          "code": "22",
+          "name_kn": "ಅರೇಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625542"
+        },
+        {
+          "code": "23",
+          "name_kn": "ದಳಸಗೆರೆ",
+          "name_en": "",
+          "lgd_code": "625541"
+        },
+        {
+          "code": "24",
+          "name_kn": "ಶಿವನಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625575"
+        },
+        {
+          "code": "25",
+          "name_kn": "ಬಿಸ್ಸನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625586"
+        },
+        {
+          "code": "26",
+          "name_kn": "ಬೀಮಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625587"
+        },
+        {
+          "code": "27",
+          "name_kn": "ಮೋತಕದಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625565"
+        },
+        {
+          "code": "28",
+          "name_kn": "ಗುಲ್ಲೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625574"
+        },
+        {
+          "code": "29",
+          "name_kn": "ಸಿದ್ದನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625546"
+        },
+        {
+          "code": "30",
+          "name_kn": "ಕಾರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625556"
+        },
+        {
+          "code": "31",
+          "name_kn": "ಕೆ.ಶೆಟ್ಟಿಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625555"
+        },
+        {
+          "code": "32",
+          "name_kn": "ಎ.ವಡ್ಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625553"
+        },
+        {
+          "code": "33",
+          "name_kn": "ಎಸ್. ವಡ್ಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625552"
+        },
+        {
+          "code": "34",
+          "name_kn": "ಎಸ್.ವಡ್ಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625552"
+        },
+        {
+          "code": "35",
+          "name_kn": "ಯವಂತಪುರ",
+          "name_en": "",
+          "lgd_code": "625557"
+        },
+        {
+          "code": "36",
+          "name_kn": "ಹಿಂಡಿಗನಾಳ",
+          "name_en": "",
+          "lgd_code": "625538"
+        },
+        {
+          "code": "37",
+          "name_kn": "ಹೊಸವೆಂಕಟಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625537"
+        },
+        {
+          "code": "38",
+          "name_kn": "ತರಬಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625539"
+        },
+        {
+          "code": "39",
+          "name_kn": "ಚಿಕ್ಕೊಂಡಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625540"
+        },
+        {
+          "code": "40",
+          "name_kn": "ಹೊಸಹಾರಡಿ",
+          "name_en": "",
+          "lgd_code": "625536"
+        },
+        {
+          "code": "41",
+          "name_kn": "ದೊಡ್ಡಹಾರಡಿ ಪ್ಲಾಂಟೇಷನ್",
+          "name_en": "",
+          "lgd_code": "625535"
+        },
+        {
+          "code": "42",
+          "name_kn": "ಕರಪ್ಪನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625576"
+        },
+        {
+          "code": "43",
+          "name_kn": "ಕೆ.ಸತ್ಯವಾರ",
+          "name_en": "",
+          "lgd_code": "625578"
+        },
+        {
+          "code": "44",
+          "name_kn": "ಡಿ.ಶೆಟ್ಟಿಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625579"
+        },
+        {
+          "code": "45",
+          "name_kn": "ಎಂ.ಹೊಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625577"
+        },
+        {
+          "code": "46",
+          "name_kn": "ದೊಡ್ಡೇನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625580"
+        },
+        {
+          "code": "47",
+          "name_kn": "ಮಲಿಯಪ್ಪನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625585"
+        },
+        {
+          "code": "48",
+          "name_kn": "ತಾವರೆಕೆರೆ",
+          "name_en": "",
+          "lgd_code": "625593"
+        },
+        {
+          "code": "49",
+          "name_kn": "ಗೇರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625592"
+        },
+        {
+          "code": "50",
+          "name_kn": "ಯಲಚನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625589"
+        },
+        {
+          "code": "51",
+          "name_kn": "ಮಂಚಪನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625590"
+        },
+        {
+          "code": "52",
+          "name_kn": "ಕಾಳಪ್ಪನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625591"
+        },
+        {
+          "code": "53",
+          "name_kn": "ಬಾಣಮಾಕನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625603"
+        },
+        {
+          "code": "54",
+          "name_kn": "ಗಂಗಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625604"
+        },
+        {
+          "code": "55",
+          "name_kn": "ವೆಂಕಟಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625605"
+        },
+        {
+          "code": "56",
+          "name_kn": "ಗೋರವೆಹಳ್ಳೆ",
+          "name_en": "",
+          "lgd_code": "625594"
+        },
+        {
+          "code": "57",
+          "name_kn": "ಎನ್ ಹೊಸಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625562"
+        },
+        {
+          "code": "58",
+          "name_kn": "ಮುದ್ದನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625563"
+        },
+        {
+          "code": "59",
+          "name_kn": "ಕೊಂಡ್ರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625566"
+        },
+        {
+          "code": "60",
+          "name_kn": "ಮೋಡೂರು",
+          "name_en": "",
+          "lgd_code": "625554"
+        },
+        {
+          "code": "61",
+          "name_kn": "ಬೈಲನರಸಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625567"
+        },
+        {
+          "code": "62",
+          "name_kn": "ಕೊರಟೆ",
+          "name_en": "",
+          "lgd_code": "625559"
+        },
+        {
+          "code": "63",
+          "name_kn": "ದೊಡ್ಡರಾಮನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625600"
+        },
+        {
+          "code": "64",
+          "name_kn": "ಹೆಡಕನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625568"
+        },
+        {
+          "code": "65",
+          "name_kn": "ಗುಂಡ್ರಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625569"
+        },
+        {
+          "code": "66",
+          "name_kn": "ಸೊಣ್ಣಿಕೆಂಪನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625558"
+        },
+        {
+          "code": "67",
+          "name_kn": "ತಿಮ್ಮಸಂದ್ರ",
+          "name_en": "",
+          "lgd_code": "625560"
+        },
+        {
+          "code": "68",
+          "name_kn": "ದೊಡ್ಡಗಾನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625561"
+        },
+        {
+          "code": "69",
+          "name_kn": "ಕೆಂಬಳಿಗಾನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625583"
+        },
+        {
+          "code": "70",
+          "name_kn": "ಸಿ.ಟಿ.ಗೊಲ್ಲಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625584"
+        },
+        {
+          "code": "71",
+          "name_kn": "ಚಿಕ್ಕನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625588"
+        },
+        {
+          "code": "72",
+          "name_kn": "ಸಿದ್ದಾಪುರ",
+          "name_en": "",
+          "lgd_code": "625582"
+        },
+        {
+          "code": "73",
+          "name_kn": "ಅಂಕೋನಹಳ್ಳಿ",
+          "name_en": "",
+          "lgd_code": "625487"
+        }
+      ]
+    }
+  ]
+}
