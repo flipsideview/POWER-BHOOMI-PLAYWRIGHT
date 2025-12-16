@@ -2411,8 +2411,7 @@ class ParallelSearchCoordinator:
         Prepare list of all villages to search.
         Returns: List of (village_code, village_name, hobli_code, hobli_name)
         
-        NOTE: eChawadi API codes DON'T match Bhoomi portal dropdown values!
-        We must select by visible text (name) instead of by value (code).
+        NOTE: Frontend now sends portal codes (not eChawadi), so select_by_value works directly.
         """
         from selenium import webdriver
         from selenium.webdriver.common.by import By
@@ -2423,11 +2422,7 @@ class ParallelSearchCoordinator:
         
         logger.info("Preparing village list...")
         
-        # Get the names from eChawadi API for matching
-        district_name = params.get('district_name', '')
-        taluk_name = params.get('taluk_name', '')
-        
-        # Use Selenium to get exact dropdown values
+        # Use Selenium to get villages from portal
         options = Options()
         options.add_argument('--headless')
         options.add_argument('--no-sandbox')
@@ -2441,46 +2436,30 @@ class ParallelSearchCoordinator:
             
             IDS = Config.ELEMENT_IDS
             
-            # Select district by finding matching name
+            # Select district using portal value (from frontend)
             dist_sel = Select(driver.find_element(By.ID, IDS['district']))
+            dist_sel.select_by_value(str(params['district_code']))
             
-            # Find the district option that matches our name
-            district_found = False
+            # Get district name from dropdown
             for opt in dist_sel.options:
-                opt_text = opt.text.strip().upper()
-                if opt.get_attribute('value') and opt.get_attribute('value') != '0':
-                    # Try exact match first, then partial match
-                    if district_name.upper() in opt_text or opt_text in district_name.upper():
-                        dist_sel.select_by_visible_text(opt.text)
-                        params['district_name'] = opt.text
-                        params['portal_district_value'] = opt.get_attribute('value')
-                        district_found = True
-                        logger.info(f"Selected district: {opt.text} (value: {opt.get_attribute('value')})")
-                        break
+                if opt.get_attribute('value') == str(params['district_code']):
+                    params['district_name'] = opt.text
+                    break
             
-            if not district_found:
-                raise Exception(f"District '{district_name}' not found in portal dropdown")
-            
+            logger.info(f"Selected district: {params.get('district_name', 'Unknown')}")
             time.sleep(2)
             
-            # Select taluk by finding matching name
+            # Select taluk using portal value
             taluk_sel = Select(driver.find_element(By.ID, IDS['taluk']))
+            taluk_sel.select_by_value(str(params['taluk_code']))
             
-            taluk_found = False
+            # Get taluk name from dropdown
             for opt in taluk_sel.options:
-                opt_text = opt.text.strip().upper()
-                if opt.get_attribute('value') and opt.get_attribute('value') != '0':
-                    if taluk_name.upper() in opt_text or opt_text in taluk_name.upper():
-                        taluk_sel.select_by_visible_text(opt.text)
-                        params['taluk_name'] = opt.text
-                        params['portal_taluk_value'] = opt.get_attribute('value')
-                        taluk_found = True
-                        logger.info(f"Selected taluk: {opt.text} (value: {opt.get_attribute('value')})")
-                        break
+                if opt.get_attribute('value') == str(params['taluk_code']):
+                    params['taluk_name'] = opt.text
+                    break
             
-            if not taluk_found:
-                raise Exception(f"Taluk '{taluk_name}' not found in portal dropdown")
-            
+            logger.info(f"Selected taluk: {params.get('taluk_name', 'Unknown')}")
             time.sleep(2)
             
             # Get all hoblis
@@ -4544,19 +4523,185 @@ def index():
 
 @app.route('/api/districts')
 def get_districts():
-    return jsonify(api.get_districts())
+    """Get districts directly from Bhoomi Portal (not eChawadi)"""
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import Select
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    from webdriver_manager.chrome import ChromeDriverManager
+    
+    try:
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        driver.get(Config.SERVICE2_URL)
+        time.sleep(3)
+        
+        dist_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['district']))
+        districts = []
+        for opt in dist_sel.options:
+            val = opt.get_attribute('value')
+            if val and val != '0' and 'Select' not in opt.text:
+                districts.append({
+                    'district_code': val,
+                    'district_name_en': opt.text,
+                    'district_name_kn': opt.text  # Same as English from portal
+                })
+        
+        driver.quit()
+        return jsonify(sorted(districts, key=lambda x: x['district_name_en']))
+    except Exception as e:
+        logger.error(f"Error loading districts from portal: {e}")
+        # Fallback to eChawadi
+        return jsonify(api.get_districts())
 
-@app.route('/api/taluks/<int:district_code>')
+@app.route('/api/taluks/<district_code>')
 def get_taluks(district_code):
-    return jsonify(api.get_taluks(district_code))
+    """Get taluks directly from Bhoomi Portal"""
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import Select
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    from webdriver_manager.chrome import ChromeDriverManager
+    
+    try:
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        driver.get(Config.SERVICE2_URL)
+        time.sleep(3)
+        
+        # Select district first
+        dist_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['district']))
+        dist_sel.select_by_value(str(district_code))
+        time.sleep(2)
+        
+        # Get taluks
+        taluk_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['taluk']))
+        taluks = []
+        for opt in taluk_sel.options:
+            val = opt.get_attribute('value')
+            if val and val != '0' and 'Select' not in opt.text:
+                taluks.append({
+                    'taluka_code': val,
+                    'taluka_name_en': opt.text,
+                    'taluka_name_kn': opt.text
+                })
+        
+        driver.quit()
+        return jsonify(sorted(taluks, key=lambda x: x['taluka_name_en']))
+    except Exception as e:
+        logger.error(f"Error loading taluks from portal: {e}")
+        return jsonify(api.get_taluks(int(district_code)))
 
-@app.route('/api/hoblis/<int:district_code>/<int:taluk_code>')
+@app.route('/api/hoblis/<district_code>/<taluk_code>')
 def get_hoblis(district_code, taluk_code):
-    return jsonify(api.get_hoblis(district_code, taluk_code))
+    """Get hoblis directly from Bhoomi Portal"""
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import Select
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    from webdriver_manager.chrome import ChromeDriverManager
+    
+    try:
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        driver.get(Config.SERVICE2_URL)
+        time.sleep(3)
+        
+        # Select district
+        dist_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['district']))
+        dist_sel.select_by_value(str(district_code))
+        time.sleep(2)
+        
+        # Select taluk
+        taluk_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['taluk']))
+        taluk_sel.select_by_value(str(taluk_code))
+        time.sleep(2)
+        
+        # Get hoblis
+        hobli_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['hobli']))
+        hoblis = []
+        for opt in hobli_sel.options:
+            val = opt.get_attribute('value')
+            if val and val != '0' and 'Select' not in opt.text:
+                hoblis.append({
+                    'hobli_code': val,
+                    'hobli_name_en': opt.text,
+                    'hobli_name_kn': opt.text
+                })
+        
+        driver.quit()
+        return jsonify(sorted(hoblis, key=lambda x: x['hobli_name_en']))
+    except Exception as e:
+        logger.error(f"Error loading hoblis from portal: {e}")
+        return jsonify(api.get_hoblis(int(district_code), int(taluk_code)))
 
-@app.route('/api/villages/<int:district_code>/<int:taluk_code>/<int:hobli_code>')
+@app.route('/api/villages/<district_code>/<taluk_code>/<hobli_code>')
 def get_villages(district_code, taluk_code, hobli_code):
-    return jsonify(api.get_villages(district_code, taluk_code, hobli_code))
+    """Get villages directly from Bhoomi Portal"""
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import Select
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    from webdriver_manager.chrome import ChromeDriverManager
+    
+    try:
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        driver.get(Config.SERVICE2_URL)
+        time.sleep(3)
+        
+        # Select district
+        dist_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['district']))
+        dist_sel.select_by_value(str(district_code))
+        time.sleep(2)
+        
+        # Select taluk
+        taluk_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['taluk']))
+        taluk_sel.select_by_value(str(taluk_code))
+        time.sleep(2)
+        
+        # Select hobli
+        hobli_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['hobli']))
+        hobli_sel.select_by_value(str(hobli_code))
+        time.sleep(2)
+        
+        # Get villages
+        village_sel = Select(driver.find_element(By.ID, Config.ELEMENT_IDS['village']))
+        villages = []
+        for opt in village_sel.options:
+            val = opt.get_attribute('value')
+            if val and val != '0' and 'Select' not in opt.text:
+                villages.append({
+                    'village_code': val,
+                    'village_name_en': opt.text,
+                    'village_name_kn': opt.text
+                })
+        
+        driver.quit()
+        return jsonify(sorted(villages, key=lambda x: x['village_name_en']))
+    except Exception as e:
+        logger.error(f"Error loading villages from portal: {e}")
+        return jsonify(api.get_villages(int(district_code), int(taluk_code), int(hobli_code)))
 
 @app.route('/api/search/start', methods=['POST'])
 def start_search():
