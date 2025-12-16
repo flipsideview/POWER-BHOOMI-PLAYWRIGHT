@@ -14,7 +14,7 @@
 ║  • Robust error recovery with detailed logging                                       ║
 ╚══════════════════════════════════════════════════════════════════════════════════════╝
 
-Version: 3.0.0-Bulletproof
+Version: 3.2.0-Database
 Author: POWER-BHOOMI Team
 """
 
@@ -221,6 +221,492 @@ class ThreadSafeCSVWriter:
                 writer.writerows(records)
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
+# PERSISTENT DATABASE MANAGER (SQLite)
+# ═══════════════════════════════════════════════════════════════════════════════════════
+
+import sqlite3
+from contextlib import contextmanager
+
+class DatabaseManager:
+    """
+    Thread-safe SQLite database manager for persistent storage.
+    
+    Features:
+    - Real-time saving of every record (no data loss on crash)
+    - Search session tracking with resume capability
+    - Village/survey progress tracking
+    - Export to CSV functionality
+    - Search history with statistics
+    
+    Database is stored in user's Documents/POWER-BHOOMI folder.
+    """
+    
+    # Database version for migrations
+    DB_VERSION = 1
+    
+    def __init__(self, db_path: str = None):
+        """Initialize database manager with optional custom path"""
+        if db_path is None:
+            # Default: Documents/POWER-BHOOMI/bhoomi_data.db
+            import platform
+            if platform.system() == 'Windows':
+                docs_folder = os.path.join(os.environ.get('USERPROFILE', ''), 'Documents')
+            else:
+                docs_folder = os.path.expanduser('~/Documents')
+            
+            self.db_folder = os.path.join(docs_folder, 'POWER-BHOOMI')
+            os.makedirs(self.db_folder, exist_ok=True)
+            self.db_path = os.path.join(self.db_folder, 'bhoomi_data.db')
+        else:
+            self.db_path = db_path
+            self.db_folder = os.path.dirname(db_path)
+        
+        self.lock = threading.Lock()
+        self._init_database()
+        logger.info(f"📁 Database initialized: {self.db_path}")
+    
+    @contextmanager
+    def get_connection(self):
+        """Thread-safe database connection context manager"""
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging for better concurrency
+        conn.execute("PRAGMA synchronous=NORMAL")  # Balance between safety and speed
+        try:
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
+    
+    def _init_database(self):
+        """Initialize database schema"""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Search Sessions Table - Track each search operation
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS search_sessions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT UNIQUE NOT NULL,
+                        owner_name TEXT NOT NULL,
+                        owner_variants TEXT,
+                        district_code TEXT,
+                        district_name TEXT,
+                        taluk_code TEXT,
+                        taluk_name TEXT,
+                        hobli_code TEXT,
+                        hobli_name TEXT,
+                        village_code TEXT,
+                        village_name TEXT,
+                        max_survey INTEGER DEFAULT 200,
+                        status TEXT DEFAULT 'running',  -- running, completed, stopped, crashed
+                        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        completed_at TIMESTAMP,
+                        total_villages INTEGER DEFAULT 0,
+                        villages_completed INTEGER DEFAULT 0,
+                        total_records INTEGER DEFAULT 0,
+                        total_matches INTEGER DEFAULT 0,
+                        notes TEXT
+                    )
+                ''')
+                
+                # Land Records Table - All records found (REAL-TIME SAVES)
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS land_records (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL,
+                        district TEXT,
+                        taluk TEXT,
+                        hobli TEXT,
+                        village TEXT,
+                        survey_no INTEGER,
+                        surnoc TEXT,
+                        hissa TEXT,
+                        period TEXT,
+                        owner_name TEXT,
+                        extent TEXT,
+                        khatah TEXT,
+                        is_match INTEGER DEFAULT 0,
+                        worker_id INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (session_id) REFERENCES search_sessions(session_id)
+                    )
+                ''')
+                
+                # Village Progress Table - Track which villages/surveys are done
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS village_progress (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL,
+                        village_code TEXT NOT NULL,
+                        village_name TEXT NOT NULL,
+                        hobli_code TEXT,
+                        hobli_name TEXT,
+                        status TEXT DEFAULT 'pending',  -- pending, in_progress, completed, failed
+                        last_survey_no INTEGER DEFAULT 0,
+                        max_survey_no INTEGER DEFAULT 200,
+                        records_found INTEGER DEFAULT 0,
+                        matches_found INTEGER DEFAULT 0,
+                        started_at TIMESTAMP,
+                        completed_at TIMESTAMP,
+                        error_message TEXT,
+                        FOREIGN KEY (session_id) REFERENCES search_sessions(session_id),
+                        UNIQUE(session_id, village_code)
+                    )
+                ''')
+                
+                # Create indexes for fast lookups
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_records_session ON land_records(session_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_records_village ON land_records(village)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_records_owner ON land_records(owner_name)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_records_match ON land_records(is_match)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_progress_session ON village_progress(session_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_status ON search_sessions(status)')
+                
+                # Version tracking
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS db_meta (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                ''')
+                cursor.execute('INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)', 
+                              ('version', str(self.DB_VERSION)))
+    
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    # SESSION MANAGEMENT
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    
+    def create_session(self, params: dict) -> str:
+        """Create a new search session and return session_id"""
+        import uuid
+        session_id = f"search_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO search_sessions (
+                        session_id, owner_name, owner_variants,
+                        district_code, district_name, taluk_code, taluk_name,
+                        hobli_code, hobli_name, village_code, village_name,
+                        max_survey, total_villages
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    session_id,
+                    params.get('owner_name', ''),
+                    json.dumps(params.get('owner_variants', [])),
+                    params.get('district_code', ''),
+                    params.get('district_name', ''),
+                    params.get('taluk_code', ''),
+                    params.get('taluk_name', ''),
+                    params.get('hobli_code', ''),
+                    params.get('hobli_name', ''),
+                    params.get('village_code', ''),
+                    params.get('village_name', ''),
+                    params.get('max_survey', 200),
+                    params.get('total_villages', 0)
+                ))
+        
+        logger.info(f"📝 Created session: {session_id}")
+        return session_id
+    
+    def update_session_status(self, session_id: str, status: str, **kwargs):
+        """Update session status and optional fields"""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                updates = ['status = ?']
+                values = [status]
+                
+                if status in ('completed', 'stopped'):
+                    updates.append('completed_at = CURRENT_TIMESTAMP')
+                
+                for key, value in kwargs.items():
+                    if key in ('villages_completed', 'total_records', 'total_matches', 'notes', 'total_villages'):
+                        updates.append(f'{key} = ?')
+                        values.append(value)
+                
+                values.append(session_id)
+                cursor.execute(f'''
+                    UPDATE search_sessions SET {', '.join(updates)} WHERE session_id = ?
+                ''', values)
+    
+    def get_session(self, session_id: str) -> Optional[dict]:
+        """Get session details"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM search_sessions WHERE session_id = ?', (session_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    def get_recent_sessions(self, limit: int = 20) -> List[dict]:
+        """Get recent search sessions"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM search_sessions 
+                ORDER BY started_at DESC 
+                LIMIT ?
+            ''', (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_resumable_sessions(self) -> List[dict]:
+        """Get sessions that can be resumed (running or crashed)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT s.*, 
+                       (SELECT COUNT(*) FROM village_progress WHERE session_id = s.session_id AND status = 'pending') as pending_villages,
+                       (SELECT COUNT(*) FROM village_progress WHERE session_id = s.session_id AND status = 'completed') as done_villages
+                FROM search_sessions s
+                WHERE s.status IN ('running', 'crashed')
+                ORDER BY s.started_at DESC
+            ''')
+            return [dict(row) for row in cursor.fetchall()]
+    
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    # VILLAGE PROGRESS TRACKING
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    
+    def register_villages(self, session_id: str, villages: List[tuple]):
+        """Register all villages for a session (for resume tracking)"""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                for village_code, village_name, hobli_code, hobli_name in villages:
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO village_progress 
+                        (session_id, village_code, village_name, hobli_code, hobli_name)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (session_id, village_code, village_name, hobli_code, hobli_name))
+    
+    def start_village(self, session_id: str, village_code: str, max_survey: int = 200):
+        """Mark village as in_progress"""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE village_progress 
+                    SET status = 'in_progress', started_at = CURRENT_TIMESTAMP, max_survey_no = ?
+                    WHERE session_id = ? AND village_code = ?
+                ''', (max_survey, session_id, village_code))
+    
+    def update_village_progress(self, session_id: str, village_code: str, last_survey: int, records: int = 0, matches: int = 0):
+        """Update village progress (call periodically during search)"""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE village_progress 
+                    SET last_survey_no = ?, records_found = records_found + ?, matches_found = matches_found + ?
+                    WHERE session_id = ? AND village_code = ?
+                ''', (last_survey, records, matches, session_id, village_code))
+    
+    def complete_village(self, session_id: str, village_code: str, records: int, matches: int):
+        """Mark village as completed"""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE village_progress 
+                    SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
+                        records_found = ?, matches_found = ?
+                    WHERE session_id = ? AND village_code = ?
+                ''', (records, matches, session_id, village_code))
+    
+    def fail_village(self, session_id: str, village_code: str, error: str):
+        """Mark village as failed"""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE village_progress 
+                    SET status = 'failed', error_message = ?
+                    WHERE session_id = ? AND village_code = ?
+                ''', (error, session_id, village_code))
+    
+    def get_pending_villages(self, session_id: str) -> List[dict]:
+        """Get villages that still need to be searched (for resume)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM village_progress 
+                WHERE session_id = ? AND status IN ('pending', 'in_progress', 'failed')
+                ORDER BY id
+            ''', (session_id,))
+            return [dict(row) for row in cursor.fetchall()]
+    
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    # RECORD MANAGEMENT (REAL-TIME SAVES)
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    
+    def save_record(self, session_id: str, record: dict, is_match: bool = False) -> int:
+        """Save a single record immediately (thread-safe, real-time)"""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO land_records (
+                        session_id, district, taluk, hobli, village,
+                        survey_no, surnoc, hissa, period,
+                        owner_name, extent, khatah, is_match, worker_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    session_id,
+                    record.get('district', ''),
+                    record.get('taluk', ''),
+                    record.get('hobli', ''),
+                    record.get('village', ''),
+                    record.get('survey_no', 0),
+                    record.get('surnoc', ''),
+                    record.get('hissa', ''),
+                    record.get('period', ''),
+                    record.get('owner_name', ''),
+                    record.get('extent', ''),
+                    record.get('khatah', ''),
+                    1 if is_match else 0,
+                    record.get('worker_id', 0)
+                ))
+                return cursor.lastrowid
+    
+    def save_records_batch(self, session_id: str, records: List[dict], matches: List[bool] = None):
+        """Save multiple records in a single transaction (faster for batch)"""
+        if not records:
+            return
+        
+        if matches is None:
+            matches = [False] * len(records)
+        
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.executemany('''
+                    INSERT INTO land_records (
+                        session_id, district, taluk, hobli, village,
+                        survey_no, surnoc, hissa, period,
+                        owner_name, extent, khatah, is_match, worker_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', [
+                    (
+                        session_id,
+                        r.get('district', ''),
+                        r.get('taluk', ''),
+                        r.get('hobli', ''),
+                        r.get('village', ''),
+                        r.get('survey_no', 0),
+                        r.get('surnoc', ''),
+                        r.get('hissa', ''),
+                        r.get('period', ''),
+                        r.get('owner_name', ''),
+                        r.get('extent', ''),
+                        r.get('khatah', ''),
+                        1 if matches[i] else 0,
+                        r.get('worker_id', 0)
+                    )
+                    for i, r in enumerate(records)
+                ])
+    
+    def get_session_records(self, session_id: str, limit: int = None, matches_only: bool = False) -> List[dict]:
+        """Get records for a session"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            query = 'SELECT * FROM land_records WHERE session_id = ?'
+            params = [session_id]
+            
+            if matches_only:
+                query += ' AND is_match = 1'
+            
+            query += ' ORDER BY id DESC'
+            
+            if limit:
+                query += ' LIMIT ?'
+                params.append(limit)
+            
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_session_stats(self, session_id: str) -> dict:
+        """Get statistics for a session"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT 
+                    COUNT(*) as total_records,
+                    SUM(is_match) as total_matches,
+                    COUNT(DISTINCT village) as villages_with_records
+                FROM land_records WHERE session_id = ?
+            ''', (session_id,))
+            
+            row = cursor.fetchone()
+            return {
+                'total_records': row['total_records'] or 0,
+                'total_matches': row['total_matches'] or 0,
+                'villages_with_records': row['villages_with_records'] or 0
+            }
+    
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    # EXPORT FUNCTIONS
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    
+    def export_to_csv(self, session_id: str, output_path: str, matches_only: bool = False) -> str:
+        """Export session records to CSV file"""
+        records = self.get_session_records(session_id, matches_only=matches_only)
+        
+        if not records:
+            return None
+        
+        fieldnames = ['district', 'taluk', 'hobli', 'village', 'survey_no', 
+                      'surnoc', 'hissa', 'period', 'owner_name', 'extent', 'khatah', 'created_at']
+        
+        with open(output_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+            writer.writeheader()
+            writer.writerows(records)
+        
+        logger.info(f"📁 Exported {len(records)} records to {output_path}")
+        return output_path
+    
+    def get_all_records_count(self) -> int:
+        """Get total records across all sessions"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM land_records')
+            return cursor.fetchone()[0]
+    
+    def search_records(self, owner_name: str, limit: int = 100) -> List[dict]:
+        """Search records by owner name across all sessions"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT r.*, s.owner_name as search_owner, s.started_at as search_date
+                FROM land_records r
+                JOIN search_sessions s ON r.session_id = s.session_id
+                WHERE r.owner_name LIKE ?
+                ORDER BY r.created_at DESC
+                LIMIT ?
+            ''', (f'%{owner_name}%', limit))
+            return [dict(row) for row in cursor.fetchall()]
+
+
+# Global database instance
+db_manager: Optional[DatabaseManager] = None
+
+def get_database() -> DatabaseManager:
+    """Get or create the global database instance"""
+    global db_manager
+    if db_manager is None:
+        db_manager = DatabaseManager()
+    return db_manager
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════
 # BHOOMI API CLIENT
 # ═══════════════════════════════════════════════════════════════════════════════════════
 
@@ -305,6 +791,11 @@ class SearchWorker:
     """
     Individual search worker that runs in its own thread with its own browser.
     Each worker processes a subset of villages independently.
+    
+    NOW WITH PERSISTENT DATABASE INTEGRATION:
+    - Every record saved to SQLite in real-time
+    - Survives browser crashes
+    - Supports resume functionality
     """
     
     def __init__(
@@ -315,7 +806,9 @@ class SearchWorker:
         state: SearchState,
         all_records_writer: ThreadSafeCSVWriter,
         matches_writer: ThreadSafeCSVWriter,
-        state_lock: threading.Lock
+        state_lock: threading.Lock,
+        db: DatabaseManager = None,  # Persistent database
+        session_id: str = None  # Current search session ID
     ):
         self.worker_id = worker_id
         self.params = search_params
@@ -324,6 +817,10 @@ class SearchWorker:
         self.all_records_writer = all_records_writer
         self.matches_writer = matches_writer
         self.state_lock = state_lock
+        
+        # Database integration
+        self.db = db
+        self.session_id = session_id
         
         self.driver = None
         self.logger = logging.getLogger(f'Worker-{worker_id}')
@@ -732,7 +1229,16 @@ class SearchWorker:
                                     
                                     record_dict = asdict(record)
                                     
-                                    # Write to all records CSV
+                                    # Check for match
+                                    is_match = any(v.lower() in owner['owner_name'].lower() for v in owner_variants if v)
+                                    
+                                    # ═══════════════════════════════════════════════════════════════════════
+                                    # SAVE TO PERSISTENT DATABASE (REAL-TIME - survives crashes!)
+                                    # ═══════════════════════════════════════════════════════════════════════
+                                    if self.db and self.session_id:
+                                        self.db.save_record(self.session_id, record_dict, is_match=is_match)
+                                    
+                                    # Write to CSV (backup)
                                     self.all_records_writer.write_record(record_dict)
                                     self.records_found += 1
                                     
@@ -743,8 +1249,6 @@ class SearchWorker:
                                         if len(self.state.all_records) > 500:
                                             self.state.all_records = self.state.all_records[-500:]
                                     
-                                    # Check for match
-                                    is_match = any(v.lower() in owner['owner_name'].lower() for v in owner_variants if v)
                                     if is_match:
                                         self.matches_writer.write_record(record_dict)
                                         self.matches_found += 1
@@ -967,6 +1471,11 @@ class ParallelSearchCoordinator:
     """
     Coordinates parallel search across multiple workers.
     Handles village distribution, worker management, and result aggregation.
+    
+    NOW WITH PERSISTENT DATABASE:
+    - Creates session at start
+    - All records saved to SQLite in real-time
+    - Supports resume from crashes
     """
     
     def __init__(self):
@@ -977,6 +1486,10 @@ class ParallelSearchCoordinator:
         self.all_records_writer: Optional[ThreadSafeCSVWriter] = None
         self.matches_writer: Optional[ThreadSafeCSVWriter] = None
         self.api = BhoomiAPI()
+        
+        # Database integration
+        self.db = get_database()
+        self.current_session_id: Optional[str] = None
     
     def _prepare_villages(self, params: dict) -> List[Tuple[str, str, str, str]]:
         """
@@ -1090,7 +1603,7 @@ class ParallelSearchCoordinator:
         return downloads
     
     def start_search(self, params: dict) -> bool:
-        """Start parallel search"""
+        """Start parallel search with persistent database storage"""
         if self.state.running:
             logger.warning("Search already running")
             return False
@@ -1115,7 +1628,16 @@ class ParallelSearchCoordinator:
                 matches_file=matches_path
             )
             
-            # Initialize CSV writers
+            # ═══════════════════════════════════════════════════════════════════════
+            # CREATE DATABASE SESSION - Records will be saved in real-time!
+            # ═══════════════════════════════════════════════════════════════════════
+            params['owner_variants'] = self.state.owner_variants
+            self.current_session_id = self.db.create_session(params)
+            with self.state_lock:
+                self.state.logs.append(f"💾 Database session created: {self.current_session_id}")
+                self.state.logs.append(f"📁 Data saved to: {self.db.db_path}")
+            
+            # Initialize CSV writers (backup to database)
             fieldnames = ['district', 'taluk', 'hobli', 'village', 'survey_no', 
                          'surnoc', 'hissa', 'period', 'owner_name', 'extent', 
                          'khatah', 'timestamp', 'worker_id']
@@ -1152,6 +1674,10 @@ class ParallelSearchCoordinator:
                     preview = village_names
                 self.state.logs.append(f"📍 Villages: {', '.join(preview)}")
             
+            # Register villages in database for resume capability
+            self.db.register_villages(self.current_session_id, villages)
+            self.db.update_session_status(self.current_session_id, 'running', total_villages=len(villages))
+            
             # Determine number of workers
             num_workers = min(Config.MAX_WORKERS, len(villages))
             self.state.total_workers = num_workers
@@ -1180,7 +1706,9 @@ class ParallelSearchCoordinator:
                     state=self.state,
                     all_records_writer=self.all_records_writer,
                     matches_writer=self.matches_writer,
-                    state_lock=self.state_lock
+                    state_lock=self.state_lock,
+                    db=self.db,  # Persistent database
+                    session_id=self.current_session_id  # Current session ID
                 )
                 self.workers.append(worker)
                 self.executor.submit(worker.run)
@@ -1245,6 +1773,20 @@ class ParallelSearchCoordinator:
                         self.state.logs.append("✅ ALL VILLAGES PROCESSED!")
                     
                     self.state.logs.append("=" * 60)
+                    
+                    # ═══════════════════════════════════════════════════════════════════════
+                    # UPDATE DATABASE SESSION STATUS
+                    # ═══════════════════════════════════════════════════════════════════════
+                    if self.current_session_id:
+                        self.db.update_session_status(
+                            self.current_session_id, 
+                            'completed',
+                            villages_completed=processed,
+                            total_records=self.state.total_records,
+                            total_matches=self.state.total_matches
+                        )
+                        self.state.logs.append(f"💾 Search saved to database: {self.current_session_id}")
+                    
                     logger.info("Search completed")
                     break
     
@@ -1253,6 +1795,16 @@ class ParallelSearchCoordinator:
         self.state.running = False
         with self.state_lock:
             self.state.logs.append("⏹️ Stop requested by user")
+        
+        # Update database session status
+        if self.current_session_id:
+            self.db.update_session_status(
+                self.current_session_id, 
+                'stopped',
+                villages_completed=len(self.state.villages_processed),
+                total_records=self.state.total_records,
+                total_matches=self.state.total_matches
+            )
         
         if self.executor:
             self.executor.shutdown(wait=False)
@@ -1286,6 +1838,12 @@ class ParallelSearchCoordinator:
                     'failed': len(self.state.villages_failed),
                     'session_recoveries': self.state.session_recoveries,
                     'failed_villages': self.state.villages_failed[-10:],  # Last 10 failed
+                },
+                # Database info
+                'database': {
+                    'session_id': self.current_session_id,
+                    'db_path': self.db.db_path if self.db else None,
+                    'persistent': True  # Records are saved in real-time
                 },
                 'workers': {
                     str(wid): {
@@ -2722,6 +3280,110 @@ def get_files_info():
         result['matches']['size'] = os.path.getsize(matches_file)
     
     return jsonify(result)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════
+# DATABASE API ENDPOINTS - Search History & Resume
+# ═══════════════════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/db/info')
+def get_database_info():
+    """Get database information and statistics"""
+    db = get_database()
+    return jsonify({
+        'db_path': db.db_path,
+        'db_folder': db.db_folder,
+        'total_records': db.get_all_records_count(),
+        'exists': os.path.exists(db.db_path),
+        'size_mb': round(os.path.getsize(db.db_path) / (1024 * 1024), 2) if os.path.exists(db.db_path) else 0
+    })
+
+@app.route('/api/db/sessions')
+def get_search_sessions():
+    """Get recent search sessions"""
+    db = get_database()
+    limit = request.args.get('limit', 20, type=int)
+    sessions = db.get_recent_sessions(limit)
+    return jsonify(sessions)
+
+@app.route('/api/db/sessions/<session_id>')
+def get_session_details(session_id):
+    """Get details for a specific session"""
+    db = get_database()
+    session = db.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    
+    stats = db.get_session_stats(session_id)
+    session.update(stats)
+    return jsonify(session)
+
+@app.route('/api/db/sessions/<session_id>/records')
+def get_session_records(session_id):
+    """Get records for a session"""
+    db = get_database()
+    limit = request.args.get('limit', 100, type=int)
+    matches_only = request.args.get('matches_only', 'false').lower() == 'true'
+    
+    records = db.get_session_records(session_id, limit=limit, matches_only=matches_only)
+    return jsonify({
+        'session_id': session_id,
+        'count': len(records),
+        'records': records
+    })
+
+@app.route('/api/db/sessions/<session_id>/export')
+def export_session_to_csv(session_id):
+    """Export session records to CSV"""
+    from flask import send_file
+    
+    db = get_database()
+    matches_only = request.args.get('matches_only', 'false').lower() == 'true'
+    
+    # Create export filename
+    session = db.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    
+    suffix = '_matches' if matches_only else '_all'
+    filename = f"bhoomi_export_{session_id}{suffix}.csv"
+    filepath = os.path.join(db.db_folder, filename)
+    
+    db.export_to_csv(session_id, filepath, matches_only=matches_only)
+    
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'No records to export'}), 404
+    
+    return send_file(
+        filepath,
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=filename
+    )
+
+@app.route('/api/db/search')
+def search_database():
+    """Search all records by owner name"""
+    db = get_database()
+    owner_name = request.args.get('q', '')
+    limit = request.args.get('limit', 100, type=int)
+    
+    if not owner_name:
+        return jsonify({'error': 'Query parameter "q" is required'}), 400
+    
+    records = db.search_records(owner_name, limit=limit)
+    return jsonify({
+        'query': owner_name,
+        'count': len(records),
+        'records': records
+    })
+
+@app.route('/api/db/resumable')
+def get_resumable_sessions():
+    """Get sessions that can be resumed"""
+    db = get_database()
+    sessions = db.get_resumable_sessions()
+    return jsonify(sessions)
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # MAIN
