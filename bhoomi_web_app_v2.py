@@ -1341,50 +1341,48 @@ class SearchWorker:
                                             
                                             # Extract owners
                                             owners = self._extract_owners(page_source)
-                                
-                                for owner in owners:
-                                    record = LandRecord(
-                                        district=district_name,
-                                        taluk=taluk_name,
-                                        hobli=hobli_name,
-                                        village=village_name,
-                                        survey_no=survey_no,
-                                        surnoc=surnoc,
-                                        hissa=hissa,
-                                        period=period,
-                                        owner_name=owner['owner_name'],
-                                        extent=owner['extent'],
-                                        khatah=owner['khatah'],
-                                        worker_id=self.worker_id
-                                    )
-                                    
-                                    record_dict = asdict(record)
-                                    
-                                    # Check for match
-                                    is_match = any(v.lower() in owner['owner_name'].lower() for v in owner_variants if v)
-                                    
-                                    # ═══════════════════════════════════════════════════════════════════════
-                                    # SAVE TO PERSISTENT DATABASE (REAL-TIME - survives crashes!)
-                                    # ═══════════════════════════════════════════════════════════════════════
-                                            if self.db and self.session_id:
-                                                self.db.save_record(self.session_id, record_dict, is_match=is_match)
                                             
-                                            # Write to CSV (backup)
-                                            self.all_records_writer.write_record(record_dict)
-                                            self.records_found += 1
-                                            
-                                            # Add to state for real-time UI display
-                                            with self.state_lock:
-                                                self.state.all_records.append(record_dict)
-                                                if len(self.state.all_records) > 500:
-                                                    self.state.all_records = self.state.all_records[-500:]
-                                            
-                                            if is_match:
-                                                self.matches_writer.write_record(record_dict)
-                                                self.matches_found += 1
+                                            for owner in owners:
+                                                record = LandRecord(
+                                                    district=district_name,
+                                                    taluk=taluk_name,
+                                                    hobli=hobli_name,
+                                                    village=village_name,
+                                                    survey_no=survey_no,
+                                                    surnoc=surnoc,
+                                                    hissa=hissa,
+                                                    period=period,
+                                                    owner_name=owner['owner_name'],
+                                                    extent=owner['extent'],
+                                                    khatah=owner['khatah'],
+                                                    worker_id=self.worker_id
+                                                )
+                                                
+                                                record_dict = asdict(record)
+                                                
+                                                # Check for match
+                                                is_match = any(v.lower() in owner['owner_name'].lower() for v in owner_variants if v)
+                                                
+                                                # SAVE TO PERSISTENT DATABASE (REAL-TIME)
+                                                if self.db and self.session_id:
+                                                    self.db.save_record(self.session_id, record_dict, is_match=is_match)
+                                                
+                                                # Write to CSV (backup)
+                                                self.all_records_writer.write_record(record_dict)
+                                                self.records_found += 1
+                                                
+                                                # Add to state for real-time UI display
                                                 with self.state_lock:
-                                                    self.state.matches.append(record_dict)
-                                                self._add_log(f"🎯 MATCH: {owner['owner_name']} in {village_name} Sy:{survey_no}")
+                                                    self.state.all_records.append(record_dict)
+                                                    if len(self.state.all_records) > 500:
+                                                        self.state.all_records = self.state.all_records[-500:]
+                                                
+                                                if is_match:
+                                                    self.matches_writer.write_record(record_dict)
+                                                    self.matches_found += 1
+                                                    with self.state_lock:
+                                                        self.state.matches.append(record_dict)
+                                                    self._add_log(f"🎯 MATCH: {owner['owner_name']} in {village_name} Sy:{survey_no}")
                                         
                                         except Exception as period_error:
                                             # Log period error but continue to next period
