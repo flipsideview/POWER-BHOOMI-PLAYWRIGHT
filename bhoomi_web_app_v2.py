@@ -2410,6 +2410,9 @@ class ParallelSearchCoordinator:
         """
         Prepare list of all villages to search.
         Returns: List of (village_code, village_name, hobli_code, hobli_name)
+        
+        NOTE: eChawadi API codes DON'T match Bhoomi portal dropdown values!
+        We must select by visible text (name) instead of by value (code).
         """
         from selenium import webdriver
         from selenium.webdriver.common.by import By
@@ -2419,6 +2422,10 @@ class ParallelSearchCoordinator:
         from webdriver_manager.chrome import ChromeDriverManager
         
         logger.info("Preparing village list...")
+        
+        # Get the names from eChawadi API for matching
+        district_name = params.get('district_name', '')
+        taluk_name = params.get('taluk_name', '')
         
         # Use Selenium to get exact dropdown values
         options = Options()
@@ -2434,20 +2441,46 @@ class ParallelSearchCoordinator:
             
             IDS = Config.ELEMENT_IDS
             
-            # Select district
+            # Select district by finding matching name
             dist_sel = Select(driver.find_element(By.ID, IDS['district']))
-            dist_opts = {o.get_attribute('value'): o.text for o in dist_sel.options if o.get_attribute('value')}
-            params['district_name'] = dist_opts.get(params['district_code'], 'Unknown')
             
-            dist_sel.select_by_value(params['district_code'])
+            # Find the district option that matches our name
+            district_found = False
+            for opt in dist_sel.options:
+                opt_text = opt.text.strip().upper()
+                if opt.get_attribute('value') and opt.get_attribute('value') != '0':
+                    # Try exact match first, then partial match
+                    if district_name.upper() in opt_text or opt_text in district_name.upper():
+                        dist_sel.select_by_visible_text(opt.text)
+                        params['district_name'] = opt.text
+                        params['portal_district_value'] = opt.get_attribute('value')
+                        district_found = True
+                        logger.info(f"Selected district: {opt.text} (value: {opt.get_attribute('value')})")
+                        break
+            
+            if not district_found:
+                raise Exception(f"District '{district_name}' not found in portal dropdown")
+            
             time.sleep(2)
             
-            # Select taluk
+            # Select taluk by finding matching name
             taluk_sel = Select(driver.find_element(By.ID, IDS['taluk']))
-            taluk_opts = {o.get_attribute('value'): o.text for o in taluk_sel.options if o.get_attribute('value')}
-            params['taluk_name'] = taluk_opts.get(params['taluk_code'], 'Unknown')
             
-            taluk_sel.select_by_value(params['taluk_code'])
+            taluk_found = False
+            for opt in taluk_sel.options:
+                opt_text = opt.text.strip().upper()
+                if opt.get_attribute('value') and opt.get_attribute('value') != '0':
+                    if taluk_name.upper() in opt_text or opt_text in taluk_name.upper():
+                        taluk_sel.select_by_visible_text(opt.text)
+                        params['taluk_name'] = opt.text
+                        params['portal_taluk_value'] = opt.get_attribute('value')
+                        taluk_found = True
+                        logger.info(f"Selected taluk: {opt.text} (value: {opt.get_attribute('value')})")
+                        break
+            
+            if not taluk_found:
+                raise Exception(f"Taluk '{taluk_name}' not found in portal dropdown")
+            
             time.sleep(2)
             
             # Get all hoblis
@@ -4253,6 +4286,12 @@ HTML_TEMPLATE = '''
             const hobliCode = hobliSelect.value || 'all';
             const villageCode = villageSelect.value || 'all';
             
+            // Get selected names (not just codes) - CRITICAL for portal matching!
+            const districtName = districtSelect.options[districtSelect.selectedIndex]?.text || '';
+            const talukName = talukSelect.options[talukSelect.selectedIndex]?.text || '';
+            const hobliName = hobliSelect.options[hobliSelect.selectedIndex]?.text || '';
+            const villageName = villageSelect.options[villageSelect.selectedIndex]?.text || '';
+            
             if (!districtCode || !talukCode) {
                 alert('Please select District and Taluk');
                 return;
@@ -4264,6 +4303,7 @@ HTML_TEMPLATE = '''
             document.getElementById('progressSection').style.display = 'block';
             
             addLog('🚀 Starting parallel search...');
+            addLog(`📍 Location: ${districtName} > ${talukName}`);
             
             try {
                 await fetch('/api/search/start', {
@@ -4272,9 +4312,13 @@ HTML_TEMPLATE = '''
                     body: JSON.stringify({
                         owner_name: ownerName,
                         district_code: districtCode,
+                        district_name: districtName,  // Send name for portal matching
                         taluk_code: talukCode,
+                        taluk_name: talukName,  // Send name for portal matching
                         hobli_code: hobliCode,
+                        hobli_name: hobliName,
                         village_code: villageCode,
+                        village_name: villageName,
                         max_survey: parseInt(maxSurveyInput.value) || 200
                     })
                 });
