@@ -3935,13 +3935,6 @@ def search_database():
         'records': records
     })
 
-@app.route('/api/db/resumable')
-def get_resumable_sessions():
-    """Get sessions that can be resumed"""
-    db = get_database()
-    sessions = db.get_resumable_sessions()
-    return jsonify(sessions)
-
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════════════
