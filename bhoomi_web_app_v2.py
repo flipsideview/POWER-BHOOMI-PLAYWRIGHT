@@ -3314,6 +3314,169 @@ HTML_TEMPLATE = '''
         @media (max-width: 768px) {
             .workers-grid { grid-template-columns: 1fr; }
         }
+        
+        /* Master Sync Styles */
+        .master-sync-card {
+            margin-bottom: 0;
+        }
+        
+        .master-stats {
+            background: var(--bg-input);
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.35rem 0;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+        
+        .stat-row.total {
+            font-weight: 600;
+            color: var(--accent-primary);
+            padding-top: 0.5rem;
+            margin-top: 0.25rem;
+            border-top: 1px solid var(--accent-primary);
+        }
+        
+        .sync-status {
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+        
+        .sync-badge {
+            display: inline-block;
+            padding: 0.35rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .sync-badge.not-synced {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--error);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        
+        .sync-badge.synced {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+        
+        .sync-badge.syncing {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--info);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        .sync-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .btn-sync {
+            flex: 1;
+            background: linear-gradient(135deg, var(--info), #2563eb);
+            border: none;
+            color: white;
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-sync:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+        }
+        
+        .btn-sync:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-stop-sync {
+            flex: 1;
+            background: linear-gradient(135deg, var(--error), #dc2626);
+            border: none;
+            color: white;
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        
+        .sync-progress {
+            background: var(--bg-input);
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+        
+        .progress-bar-container {
+            height: 6px;
+            background: var(--border-color);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.75rem;
+        }
+        
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--info), var(--success));
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+        
+        .sync-log {
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 0.7rem;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-muted);
+            line-height: 1.6;
+        }
+        
+        .sync-log .log-entry {
+            padding: 0.15rem 0;
+        }
+        
+        .sync-note {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-align: center;
+            padding: 0.5rem;
+            background: rgba(59, 130, 246, 0.05);
+            border-radius: 6px;
+            border: 1px dashed rgba(59, 130, 246, 0.2);
+        }
     </style>
 </head>
 <body>
@@ -3331,7 +3494,70 @@ HTML_TEMPLATE = '''
     </header>
     
     <main class="main-container">
-        <aside class="card">
+        <aside>
+            <!-- Master Database Sync Card -->
+            <div class="card master-sync-card" id="masterSyncCard">
+                <h2 class="card-title" style="cursor: pointer;" onclick="toggleMasterSync()">
+                    🗄️ Master Database
+                    <span id="masterSyncToggle" style="margin-left: auto; font-size: 0.8rem; color: var(--text-muted);">▼</span>
+                </h2>
+                
+                <div id="masterSyncContent">
+                    <div class="master-stats" id="masterStats">
+                        <div class="stat-row">
+                            <span>Districts:</span>
+                            <span id="statDistricts" class="mono">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>Taluks:</span>
+                            <span id="statTaluks" class="mono">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>Hoblis:</span>
+                            <span id="statHoblis" class="mono">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>Villages:</span>
+                            <span id="statVillages" class="mono">-</span>
+                        </div>
+                        <div class="stat-row total">
+                            <span>Total Locations:</span>
+                            <span id="statTotal" class="mono">-</span>
+                        </div>
+                    </div>
+                    
+                    <div class="sync-status" id="syncStatus">
+                        <span class="sync-badge not-synced" id="syncBadge">Not Synced</span>
+                    </div>
+                    
+                    <div class="sync-actions">
+                        <button class="btn btn-sync" id="btnStartSync" onclick="startMasterSync()">
+                            🔄 Sync All Locations
+                        </button>
+                        <button class="btn btn-stop-sync" id="btnStopSync" onclick="stopMasterSync()" style="display: none;">
+                            ⏹️ Stop Sync
+                        </button>
+                    </div>
+                    
+                    <div class="sync-progress" id="syncProgress" style="display: none;">
+                        <div class="progress-header">
+                            <span>Syncing...</span>
+                            <span id="syncPercent" class="mono">0%</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" id="syncProgressBar" style="width: 0%;"></div>
+                        </div>
+                        <div class="sync-log" id="syncLog"></div>
+                    </div>
+                    
+                    <p class="sync-note">
+                        ℹ️ Sync once to index all ~30,000 Karnataka villages for 100% accurate search.
+                    </p>
+                </div>
+            </div>
+            
+            <!-- Search Configuration Card -->
+            <div class="card" style="margin-top: 1rem;">
             <h2 class="card-title">Search Configuration</h2>
             
             <div class="form-group">
@@ -3376,6 +3602,7 @@ HTML_TEMPLATE = '''
                 <span>⚡</span>
                 <span>Start Parallel Search</span>
             </button>
+            </div>
         </aside>
         
         <section>
@@ -3742,6 +3969,9 @@ HTML_TEMPLATE = '''
         // State
         let searchRunning = false;
         let pollInterval = null;
+        let masterSyncRunning = false;
+        let masterSyncInterval = null;
+        let masterSyncCollapsed = false;
         
         // Elements
         const districtSelect = document.getElementById('district');
@@ -3756,7 +3986,139 @@ HTML_TEMPLATE = '''
         document.addEventListener('DOMContentLoaded', () => {
             loadDistricts();
             setupEventListeners();
+            loadMasterStats();  // Load master database stats on page load
         });
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // MASTER DATABASE SYNC FUNCTIONS
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        function toggleMasterSync() {
+            const content = document.getElementById('masterSyncContent');
+            const toggle = document.getElementById('masterSyncToggle');
+            masterSyncCollapsed = !masterSyncCollapsed;
+            content.style.display = masterSyncCollapsed ? 'none' : 'block';
+            toggle.textContent = masterSyncCollapsed ? '▶' : '▼';
+        }
+        
+        async function loadMasterStats() {
+            try {
+                const response = await fetch('/api/master/stats');
+                const stats = await response.json();
+                
+                document.getElementById('statDistricts').textContent = stats.districts.toLocaleString();
+                document.getElementById('statTaluks').textContent = stats.taluks.toLocaleString();
+                document.getElementById('statHoblis').textContent = stats.hoblis.toLocaleString();
+                document.getElementById('statVillages').textContent = stats.villages.toLocaleString();
+                document.getElementById('statTotal').textContent = stats.total_locations.toLocaleString();
+                
+                const badge = document.getElementById('syncBadge');
+                if (stats.is_synced) {
+                    badge.textContent = '✅ Synced';
+                    badge.className = 'sync-badge synced';
+                    // Auto-collapse if already synced
+                    if (!masterSyncCollapsed) {
+                        toggleMasterSync();
+                    }
+                } else {
+                    badge.textContent = '⚠️ Not Synced';
+                    badge.className = 'sync-badge not-synced';
+                }
+            } catch (error) {
+                console.error('Failed to load master stats:', error);
+            }
+        }
+        
+        async function startMasterSync() {
+            if (masterSyncRunning) return;
+            
+            try {
+                const response = await fetch('/api/master/sync/start', { method: 'POST' });
+                const result = await response.json();
+                
+                if (result.error && !result.error.includes('already in progress')) {
+                    alert('Sync error: ' + result.error);
+                    return;
+                }
+                
+                masterSyncRunning = true;
+                
+                // Update UI
+                document.getElementById('btnStartSync').style.display = 'none';
+                document.getElementById('btnStopSync').style.display = 'block';
+                document.getElementById('syncProgress').style.display = 'block';
+                document.getElementById('syncBadge').textContent = '🔄 Syncing...';
+                document.getElementById('syncBadge').className = 'sync-badge syncing';
+                
+                // Start polling for progress
+                masterSyncInterval = setInterval(pollMasterSync, 1000);
+                
+            } catch (error) {
+                alert('Failed to start sync: ' + error.message);
+            }
+        }
+        
+        async function stopMasterSync() {
+            try {
+                await fetch('/api/master/sync/stop', { method: 'POST' });
+                clearInterval(masterSyncInterval);
+                masterSyncRunning = false;
+                
+                // Update UI
+                document.getElementById('btnStartSync').style.display = 'block';
+                document.getElementById('btnStopSync').style.display = 'none';
+                
+                loadMasterStats();
+            } catch (error) {
+                console.error('Failed to stop sync:', error);
+            }
+        }
+        
+        async function pollMasterSync() {
+            try {
+                const response = await fetch('/api/master/sync/status');
+                const status = await response.json();
+                
+                // Update stats
+                const stats = status.stats;
+                document.getElementById('statDistricts').textContent = stats.districts.toLocaleString();
+                document.getElementById('statTaluks').textContent = stats.taluks.toLocaleString();
+                document.getElementById('statHoblis').textContent = stats.hoblis.toLocaleString();
+                document.getElementById('statVillages').textContent = stats.villages.toLocaleString();
+                
+                const total = stats.districts + stats.taluks + stats.hoblis + stats.villages;
+                document.getElementById('statTotal').textContent = total.toLocaleString();
+                
+                // Estimate progress (rough estimate based on expected ~30k villages)
+                const estimatedTotal = 30000;
+                const progress = Math.min(100, Math.round((stats.villages / estimatedTotal) * 100));
+                document.getElementById('syncPercent').textContent = progress + '%';
+                document.getElementById('syncProgressBar').style.width = progress + '%';
+                
+                // Update log
+                const logContainer = document.getElementById('syncLog');
+                logContainer.innerHTML = status.progress
+                    .slice(-15)
+                    .map(entry => `<div class="log-entry">${entry}</div>`)
+                    .join('');
+                logContainer.scrollTop = logContainer.scrollHeight;
+                
+                // Check if sync completed
+                if (!status.is_syncing && masterSyncRunning) {
+                    clearInterval(masterSyncInterval);
+                    masterSyncRunning = false;
+                    
+                    document.getElementById('btnStartSync').style.display = 'block';
+                    document.getElementById('btnStopSync').style.display = 'none';
+                    
+                    // Reload final stats
+                    loadMasterStats();
+                }
+                
+            } catch (error) {
+                console.error('Failed to poll sync status:', error);
+            }
+        }
         
         function setupEventListeners() {
             districtSelect.addEventListener('change', () => {
