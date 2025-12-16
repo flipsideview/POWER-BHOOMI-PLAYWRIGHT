@@ -1271,7 +1271,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>POWER-BHOOMI v2.2 | Mac Edition</title>
+    <title>POWER-BHOOMI v3.0 | Bulletproof Edition</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Noto+Sans+Kannada:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -1774,7 +1774,7 @@ HTML_TEMPLATE = '''
                     <p>Parallel Search Engine</p>
                 </div>
             </div>
-            <div class="version-badge">v2.2 Mac • 4 Workers</div>
+            <div class="version-badge">v3.0 🛡️ Bulletproof • 4 Workers</div>
         </div>
     </header>
     
@@ -2676,7 +2676,7 @@ def get_files_info():
 if __name__ == '__main__':
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║                  POWER-BHOOMI v2.2 - MAC EDITION (4 WORKERS)                         ║
+║                  POWER-BHOOMI v3.0 - BULLETPROOF EDITION (4 WORKERS)                 ║
 ╠══════════════════════════════════════════════════════════════════════════════════════╣
 ║                                                                                      ║
 ║   🍎 Optimized for macOS                                                             ║
