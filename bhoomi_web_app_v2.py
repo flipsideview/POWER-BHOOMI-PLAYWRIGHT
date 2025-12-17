@@ -1028,12 +1028,102 @@ class SearchWorker:
         # Clean up user data directory
         user_data_dir = os.path.join(tempfile.gettempdir(), f'chrome_worker_{self.worker_id}_{os.getpid()}')
     
+    def _handle_alert(self) -> tuple:
+        """
+        Handle any JavaScript alert that might be blocking the page.
+        Returns (had_alert: bool, alert_text: str, is_portal_issue: bool)
+        
+        For 100% accuracy, we detect portal issues and retry instead of failing.
+        """
+        try:
+            from selenium.webdriver.common.alert import Alert
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            
+            # Check if there's an alert (with short timeout)
+            try:
+                WebDriverWait(self.driver, 1).until(EC.alert_is_present())
+                alert = Alert(self.driver)
+                alert_text = alert.text
+                
+                # Check if this is a portal issue (not our fault)
+                portal_issues = [
+                    'facing some issues',
+                    'try after some time',
+                    'currently facing',
+                    'service unavailable',
+                    'server error',
+                    'technical difficulties',
+                    'please try again',
+                    'contact bhoomi@karnataka.gov.in'
+                ]
+                
+                is_portal_issue = any(phrase in alert_text.lower() for phrase in portal_issues)
+                
+                # Dismiss the alert
+                alert.accept()
+                
+                if is_portal_issue:
+                    self._add_log(f"⚠️ Portal issue detected: {alert_text[:50]}...")
+                else:
+                    self._add_log(f"⚠️ Alert dismissed: {alert_text[:50]}...")
+                
+                return (True, alert_text, is_portal_issue)
+                
+            except:
+                # No alert present - this is fine
+                return (False, '', False)
+                
+        except Exception as e:
+            self.logger.warning(f"Alert handling error: {e}")
+            return (False, '', False)
+    
+    def _wait_for_portal_recovery(self, max_wait: int = 30) -> bool:
+        """
+        Wait for portal to recover from issues.
+        Returns True if recovered, False if still having issues.
+        """
+        self._add_log(f"⏳ Waiting for portal to recover (max {max_wait}s)...")
+        
+        for attempt in range(max_wait // 5):
+            time.sleep(5)
+            
+            # Try to access the portal
+            try:
+                self.driver.get(Config.SERVICE2_URL)
+                time.sleep(2)
+                
+                # Check for alerts
+                had_alert, alert_text, is_portal_issue = self._handle_alert()
+                
+                if not had_alert or not is_portal_issue:
+                    self._add_log(f"✅ Portal recovered after {(attempt + 1) * 5}s")
+                    return True
+                    
+            except Exception as e:
+                pass  # Keep waiting
+        
+        self._add_log(f"❌ Portal still having issues after {max_wait}s")
+        return False
+    
     def _is_session_expired(self, page_source: str = None) -> bool:
         """
         Detect if the Bhoomi portal session has expired.
         Returns True if session expired, False otherwise.
+        
+        Also handles any alerts that might be blocking.
         """
         try:
+            # First, handle any pending alerts
+            had_alert, alert_text, is_portal_issue = self._handle_alert()
+            
+            if is_portal_issue:
+                # Portal is having issues - wait and retry
+                if self._wait_for_portal_recovery(30):
+                    return False  # Recovered, session is OK
+                else:
+                    return True  # Still having issues, treat as session issue
+            
             if page_source is None:
                 page_source = self.driver.page_source
             
@@ -1055,6 +1145,9 @@ class SearchWorker:
             return False
         except Exception as e:
             self.logger.error(f"Session check error: {e}")
+            # Handle the case where error is due to alert
+            if 'unexpected alert' in str(e).lower():
+                self._handle_alert()
             return False
     
     def _refresh_session(self) -> bool:
@@ -1213,7 +1306,8 @@ class SearchWorker:
         surveys_checked = 0
         surveys_with_data = 0
         session_retries = 0  # Track session recovery attempts
-        
+        portal_retries = 0   # Track RTC access retries per survey (FIXED: prevent infinite loops)
+
         self._add_log(f"🏘️ Starting {village_name}: Surveys 1 to {max_survey}")
         
         # SEQUENTIAL SURVEY ITERATION: 1, 2, 3... NO SKIPPING
@@ -1283,8 +1377,28 @@ class SearchWorker:
                 time.sleep(Config.POST_CLICK_WAIT)
                 
                 # ═══════════════════════════════════════════════════════════════════════
-                # SESSION EXPIRATION CHECK #2 - After clicking GO
+                # PORTAL ISSUE & SESSION CHECK - After clicking GO
+                # For 100% accuracy: Handle alerts and portal issues before proceeding
                 # ═══════════════════════════════════════════════════════════════════════
+                
+                # First, handle any portal alerts (e.g., "facing issues" messages)
+                had_alert, alert_text, is_portal_issue = self._handle_alert()
+                
+                if is_portal_issue:
+                    # FIXED: Don't loop forever! This alert is for THIS SPECIFIC survey/RTC
+                    # The portal is working, but THIS record might have issues
+                    portal_retries += 1
+                    if portal_retries <= 2:  # Max 2 retries per survey
+                        self._add_log(f"⚠️ RTC issue at {village_name} Sy:{survey_no} (retry {portal_retries}/2)")
+                        time.sleep(3)
+                        continue  # Retry same survey once more
+                    else:
+                        # After 2 retries, this survey has a persistent issue - SKIP IT
+                        self._add_log(f"⏭️ Skipping Sy:{survey_no} - RTC access issue (not portal down)")
+                        portal_retries = 0  # Reset for next survey
+                        survey_no += 1
+                        continue  # Move to next survey
+                
                 page_source = self.driver.page_source
                 if self._is_session_expired(page_source):
                     self._add_log(f"⚠️ Session expired after GO click - {village_name} survey {survey_no}")
@@ -1310,8 +1424,9 @@ class SearchWorker:
                     survey_no += 1  # Move to next survey
                     continue
                 
-                # Found data - reset empty count and increment found count
+                # Found data - reset counters and increment found count
                 empty_count = 0
+                portal_retries = 0  # Reset portal retry counter on success
                 surveys_with_data += 1
                 
                 # Process each surnoc
@@ -1374,6 +1489,13 @@ class SearchWorker:
                                             self.driver.execute_script("arguments[0].click();", fetch_btn)
                                             time.sleep(Config.POST_CLICK_WAIT)
                                             
+                                            # Handle any portal alerts after Fetch
+                                            had_alert, alert_text, is_portal_issue = self._handle_alert()
+                                            if is_portal_issue:
+                                                # Portal issue - this period might not be accessible, try next
+                                                self._add_log(f"⚠️ Portal issue for Sy:{survey_no} H:{hissa} P:{period[:20]}")
+                                                continue  # Try next period
+                                            
                                             # Verify page loaded (look for owner table)
                                             page_source = self.driver.page_source
                                             if 'Session expired' in page_source or 'login again' in page_source.lower():
@@ -1415,6 +1537,9 @@ class SearchWorker:
                                                 self.all_records_writer.write_record(record_dict)
                                                 self.records_found += 1
                                                 
+                                                # FIXED: Sync worker stats to shared state for UI display
+                                                self._update_status(records_found=self.records_found)
+                                                
                                                 # Add to state for real-time UI display
                                                 with self.state_lock:
                                                     self.state.all_records.append(record_dict)
@@ -1424,6 +1549,8 @@ class SearchWorker:
                                                 if is_match:
                                                     self.matches_writer.write_record(record_dict)
                                                     self.matches_found += 1
+                                                    # FIXED: Sync match count too
+                                                    self._update_status(matches_found=self.matches_found)
                                                     with self.state_lock:
                                                         self.state.matches.append(record_dict)
                                                     self._add_log(f"🎯 MATCH: {owner['owner_name']} in {village_name} Sy:{survey_no}")

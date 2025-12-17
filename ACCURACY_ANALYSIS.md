@@ -443,3 +443,4 @@ The application is designed to be as accurate as possible within the constraints
 - Performance considerations
 
 **Your data is reliable, complete, and verifiable!** 🎉
+

@@ -186,3 +186,4 @@ SELECT '' as '';
 --
 -- 3. ALWAYS backup first:
 --    sqlite3 ~/Documents/POWER-BHOOMI/bhoomi_data.db ".backup bhoomi_data_backup.db"
+

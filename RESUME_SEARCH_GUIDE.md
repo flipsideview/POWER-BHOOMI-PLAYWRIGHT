@@ -400,3 +400,4 @@ sqlite3 ~/Documents/POWER-BHOOMI/bhoomi_data.db
 ---
 
 **Remember:** All searches are automatically saved in real-time. Even if your browser crashes, your data is safe! 🛡️
+
