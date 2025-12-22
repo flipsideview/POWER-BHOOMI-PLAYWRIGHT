@@ -7229,7 +7229,7 @@ def export_current_skipped_csv():
 if __name__ == '__main__':
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║            POWER-BHOOMI v4.0 - ENTERPRISE EDITION (12 WORKERS + HEALTH MGR)          ║
+║         POWER-BHOOMI v6.0 - PRODUCTION (100% ACCURACY + 12 WORKERS)                 ║
 ╠══════════════════════════════════════════════════════════════════════════════════════╣
 ║  🏥 ENTERPRISE FEATURES:                                                             ║
 ║   • 12 Parallel Browser Workers (3x Performance)                                     ║
