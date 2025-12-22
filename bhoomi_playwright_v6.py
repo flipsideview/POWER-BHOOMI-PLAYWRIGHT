@@ -5500,7 +5500,7 @@ HTML_TEMPLATE = '''
                     <p>Parallel Search Engine</p>
                 </div>
             </div>
-            <div class="version-badge">v4.0 🏥 Enterprise • 12 Workers + Health Manager</div>
+            <div class="version-badge">v6.0 🎯 PRODUCTION • 100% Accuracy • 12 Workers</div>
         </div>
     </header>
     
