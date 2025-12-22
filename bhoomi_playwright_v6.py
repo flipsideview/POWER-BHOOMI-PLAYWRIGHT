@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║              POWER-BHOOMI v6.0 - PRODUCTION RELEASE (100% ACCURACY)                  ║
+║         POWER-BHOOMI v6.1 - OWNER EXTRACTION FIX (100% ACCURACY)                    ║
 ║                  Karnataka Land Records Search Tool - Playwright Edition             ║
 ╠══════════════════════════════════════════════════════════════════════════════════════╣
 ║  🔒 PRODUCTION FEATURES:                                                             ║
@@ -22,7 +22,7 @@
 ║  • FIX: Skipped surveys count now matches CSV export exactly                        ║
 ╚══════════════════════════════════════════════════════════════════════════════════════╝
 
-Version: 6.0.0-PRODUCTION-100%ACCURACY
+Version: 6.1.0-PRODUCTION-OWNER_EXTRACTION_FIX
 Author: POWER-BHOOMI Team
 """
 
@@ -3188,14 +3188,47 @@ class SearchWorker:
                                             if 'Session expired' in page_source or 'login again' in page_source.lower():
                                                 raise Exception("Session expired during fetch")
                                             
-                                            if Config.LATEST_PERIOD_ONLY:
-                                                self._add_log(f"✓ Sy:{survey_no} H:{hissa} Latest Period: {period[:30]}")
-                                            else:
-                                                self._add_log(f"✓ Sy:{survey_no} H:{hissa} Period: {period[:30]}")
-                                            period_selected = True
-                                            
-                                            # Extract owners
+                                            # Extract owners FIRST before logging success
                                             owners = self._extract_owners(page_source)
+                                            
+                                            # 🔧 v6.1 FIX: Only log success if owners were actually found
+                                            if owners:
+                                                if Config.LATEST_PERIOD_ONLY:
+                                                    self._add_log(f"✓ Sy:{survey_no} H:{hissa} [{len(owners)} owners] Period: {period[:30]}")
+                                                else:
+                                                    self._add_log(f"✓ Sy:{survey_no} H:{hissa} [{len(owners)} owners] Period: {period[:30]}")
+                                            else:
+                                                # 🔧 v6.1 FIX: Log when no owners found - this is critical data loss!
+                                                self._add_log(f"⚠️ Sy:{survey_no} H:{hissa} NO OWNERS - page may not have loaded")
+                                                # Save as potential skipped item for tracking
+                                                skip_record = {
+                                                    'village': village_name,
+                                                    'village_code': village_code,
+                                                    'survey_no': survey_no,
+                                                    'surnoc': surnoc,
+                                                    'hissa': hissa,
+                                                    'period': period[:50] if period else '',
+                                                    'reason': 'No owner data extracted from page (page may be empty/error)',
+                                                    'timestamp': datetime.now().isoformat()
+                                                }
+                                                skipped_in_village.append(skip_record)
+                                                with self.state_lock:
+                                                    self.state.skipped_surveys.append(skip_record)
+                                                if self.db and self.session_id:
+                                                    try:
+                                                        self.db.save_skipped_item(
+                                                            session_id=self.session_id,
+                                                            village_name=village_name,
+                                                            survey_no=survey_no,
+                                                            surnoc=surnoc,
+                                                            hissa=hissa,
+                                                            period=period[:50] if period else '',
+                                                            error='No owner data extracted'
+                                                        )
+                                                    except Exception:
+                                                        pass
+                                            
+                                            period_selected = True
                                             
                                             for owner in owners:
                                                 record = LandRecord(
@@ -5500,7 +5533,7 @@ HTML_TEMPLATE = '''
                     <p>Parallel Search Engine</p>
                 </div>
             </div>
-            <div class="version-badge">v6.0 🎯 PRODUCTION • 100% Accuracy • 12 Workers</div>
+            <div class="version-badge">v6.1 🔧 OWNER EXTRACTION FIX • 12 Workers</div>
         </div>
     </header>
     
@@ -7229,7 +7262,7 @@ def export_current_skipped_csv():
 if __name__ == '__main__':
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║         POWER-BHOOMI v6.0 - PRODUCTION (100% ACCURACY + 12 WORKERS)                 ║
+║         POWER-BHOOMI v6.1 - OWNER EXTRACTION FIX (12 WORKERS)                       ║
 ╠══════════════════════════════════════════════════════════════════════════════════════╣
 ║  🏥 ENTERPRISE FEATURES:                                                             ║
 ║   • 12 Parallel Browser Workers (3x Performance)                                     ║
