@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║         POWER-BHOOMI v6.1 - OWNER EXTRACTION FIX (100% ACCURACY)                    ║
+║     POWER-BHOOMI v6.2 - NETWORK RECOVERY (WAIT+RETRY, 100% ACCURACY)                ║
 ║                  Karnataka Land Records Search Tool - Playwright Edition             ║
 ╠══════════════════════════════════════════════════════════════════════════════════════╣
 ║  🔒 PRODUCTION FEATURES:                                                             ║
@@ -22,7 +22,7 @@
 ║  • FIX: Skipped surveys count now matches CSV export exactly                        ║
 ╚══════════════════════════════════════════════════════════════════════════════════════╝
 
-Version: 6.1.0-PRODUCTION-OWNER_EXTRACTION_FIX
+Version: 6.2.0-PRODUCTION-NETWORK_RECOVERY_FIX
 Author: POWER-BHOOMI Team
 """
 
@@ -3702,6 +3702,96 @@ class SearchWorker:
                             completion_reason = 'session_failure'
                             break
                 
+                # ═══════════════════════════════════════════════════════════════════════
+                # 🔧 v6.2 FIX: NETWORK ERROR DETECTION - WAIT AND RETRY, DON'T SKIP!
+                # ═══════════════════════════════════════════════════════════════════════
+                elif any(net_err in error_str for net_err in [
+                    'net::err_internet_disconnected',
+                    'net::err_network_changed', 
+                    'net::err_name_not_resolved',
+                    'net::err_connection_refused',
+                    'net::err_connection_reset',
+                    'net::err_connection_closed',
+                    'net::err_connection_timed_out',
+                    'net::err_timed_out',
+                    'net::err_address_unreachable',
+                    'timeout 20000ms exceeded',  # Playwright page timeout
+                    'target page, context or browser has been closed'
+                ]):
+                    # NETWORK ERROR - WAIT FOR RECOVERY, DON'T SKIP!
+                    self._add_log(f"🌐 NETWORK ERROR at survey {survey_no}: {error_str[:40]}")
+                    self._add_log(f"⏳ Waiting for network connectivity...")
+                    
+                    network_wait_attempts = 0
+                    max_network_wait = 30  # Max 30 attempts (5 minutes total)
+                    network_check_interval = 10  # Check every 10 seconds
+                    
+                    network_recovered = False
+                    while network_wait_attempts < max_network_wait:
+                        if not self.state.running:
+                            self._add_log(f"⏹️ Search stopped during network wait")
+                            return
+                        
+                        network_wait_attempts += 1
+                        
+                        # Wait before checking
+                        time.sleep(network_check_interval)
+                        
+                        # Try a simple network check
+                        try:
+                            import requests
+                            response = requests.head('https://landrecords.karnataka.gov.in', timeout=5, verify=False)
+                            if response.status_code < 500:
+                                self._add_log(f"✅ Network restored after {network_wait_attempts * network_check_interval}s!")
+                                network_recovered = True
+                                break
+                        except Exception as ping_err:
+                            if network_wait_attempts % 3 == 0:  # Log every 30 seconds
+                                self._add_log(f"🔄 Network still down ({network_wait_attempts * network_check_interval}s) - waiting...")
+                    
+                    if network_recovered:
+                        # Network is back - restart browser and RETRY THIS SURVEY
+                        self._add_log(f"🔄 Restarting browser and retrying survey {survey_no}...")
+                        try:
+                            self._close_browser()
+                            time.sleep(2)
+                            self._init_browser()
+                            continue  # RETRY same survey - don't increment!
+                        except Exception as restart_err:
+                            self._add_log(f"❌ Browser restart after network recovery failed: {str(restart_err)[:30]}")
+                            # Fall through to skip this survey only
+                    else:
+                        # Network didn't recover in 5 minutes
+                        self._add_log(f"❌ Network did not recover after {max_network_wait * network_check_interval}s")
+                        # Save as skipped with clear reason
+                        skip_record = {
+                            'village': village_name,
+                            'village_code': village_code,
+                            'survey_no': survey_no,
+                            'surnoc': '*',
+                            'hissa': '*',
+                            'period': '',
+                            'reason': f'Network error - did not recover after {max_network_wait * network_check_interval}s wait',
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        skipped_in_village.append(skip_record)
+                        with self.state_lock:
+                            self.state.skipped_surveys.append(skip_record)
+                        if self.db and self.session_id:
+                            try:
+                                self.db.save_skipped_item(
+                                    session_id=self.session_id,
+                                    village_name=village_name,
+                                    survey_no=survey_no,
+                                    surnoc='*',
+                                    hissa='*',
+                                    period='',
+                                    error=f'Network error - no recovery after {max_network_wait * network_check_interval}s'
+                                )
+                            except Exception:
+                                pass
+                        survey_no += 1  # Only skip after exhausting network wait
+                
                 else:
                     # Other error - log and continue to next survey
                     self.errors += 1
@@ -5533,7 +5623,7 @@ HTML_TEMPLATE = '''
                     <p>Parallel Search Engine</p>
                 </div>
             </div>
-            <div class="version-badge">v6.1 🔧 OWNER EXTRACTION FIX • 12 Workers</div>
+            <div class="version-badge">v6.2 🌐 NETWORK RECOVERY • WAIT+RETRY • 12 Workers</div>
         </div>
     </header>
     
@@ -7262,7 +7352,7 @@ def export_current_skipped_csv():
 if __name__ == '__main__':
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║         POWER-BHOOMI v6.1 - OWNER EXTRACTION FIX (12 WORKERS)                       ║
+║       POWER-BHOOMI v6.2 - NETWORK RECOVERY (WAIT+RETRY) (12 WORKERS)                ║
 ╠══════════════════════════════════════════════════════════════════════════════════════╣
 ║  🏥 ENTERPRISE FEATURES:                                                             ║
 ║   • 12 Parallel Browser Workers (3x Performance)                                     ║
