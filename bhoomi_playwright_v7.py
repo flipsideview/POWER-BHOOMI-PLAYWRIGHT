@@ -2492,14 +2492,18 @@ class SearchWorker:
             self.logger.debug(f"Error selecting '{text[:50]}' in {selector_id}: {str(e)[:100]}")
             raise
     
-    def _pw_get_dropdown_options(self, selector_id):
-        """Helper: Get dropdown options"""
+    def _pw_get_dropdown_options(self, selector_id, max_wait=10, poll_interval=0.5):
+        """Helper: Get dropdown options with polling to avoid AJAX race."""
         try:
-            # Wait a bit for dropdown to populate
-            time.sleep(0.5)
-            options = self.page.locator(f'#{selector_id} option').all_text_contents()
-            filtered = [o for o in options if 'Select' not in o and o.strip()]
-            return filtered
+            elapsed = 0.0
+            while elapsed < max_wait:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+                options = self.page.locator(f'#{selector_id} option').all_text_contents()
+                filtered = [o for o in options if 'Select' not in o and o.strip()]
+                if filtered:
+                    return filtered
+            return []
         except Exception as e:
             self.logger.error(f"Error getting dropdown options for {selector_id}: {e}")
             return []
@@ -2592,9 +2596,9 @@ class SearchWorker:
                     return owners
             
             if results_table:
-                # Extract from the validated results table only
                 rows = results_table.find_all('tr')
-                header_idx = {}  # Track column indices for better extraction
+                header_idx = {}
+                header_found = False
                 
                 for row_idx, row in enumerate(rows):
                     cells = row.find_all(['td', 'th'])
@@ -2602,21 +2606,39 @@ class SearchWorker:
                         cell_texts = [c.get_text(strip=True) for c in cells]
                         row_text = ' '.join(cell_texts)
                         
-                        # Detect header row and build column map
-                        # 🔧 v7.0 FIX: Use FIRST MATCH ONLY for 'owner' to prevent
-                        # "Owner Category" from overwriting "Owner" column index.
-                        # Portal columns: Owner | Extent | Owner Category | Gov Restriction | Court stay | Alienated
-                        if row_idx == 0 or any(h.lower() in row_text.lower() for h in ['owner', 'extent', 'slno', 'name']):
-                            for i, txt in enumerate(cell_texts):
-                                txt_lower = txt.lower()
-                                # 🔧 v7.0: FIRST MATCH ONLY - don't overwrite if already found
+                        # v7.1 FIX: Only check first 2 rows for headers.
+                        # Prevents data rows containing "name"/"extent" in owner
+                        # name text from being misidentified as headers.
+                        if not header_found and row_idx <= 1:
+                            is_header = any(
+                                h.lower() in row_text.lower()
+                                for h in ['owner', 'extent', 'slno', 'ಮಾಲೀಕ', 'ವಿಸ್ತೀರ್ಣ', 'ಕ್ರಮ']
+                            )
+                            if row_idx == 0 or is_header:
+                                # v7.1 FIX: Strip SlNo from header so indices
+                                # align with data rows (which also strip serials).
+                                if cell_texts and SKIP_PATTERNS.match(cell_texts[0]):
+                                    cell_texts = cell_texts[1:]
+                                
+                                # Pass 1: exact 'owner'/'ಮಾಲೀಕ' (high confidence)
+                                for i, txt in enumerate(cell_texts):
+                                    txt_lower = txt.lower()
+                                    if 'owner' not in header_idx:
+                                        if 'owner' in txt_lower or 'ಮಾಲೀಕ' in txt:
+                                            header_idx['owner'] = i
+                                    if 'extent' not in header_idx:
+                                        if 'extent' in txt_lower or 'ವಿಸ್ತೀರ್ಣ' in txt:
+                                            header_idx['extent'] = i
+                                
+                                # Pass 2: fallback to generic 'name'/'ಹೆಸರು'
                                 if 'owner' not in header_idx:
-                                    if 'owner' in txt_lower or 'name' in txt_lower or 'ಮಾಲೀಕ' in txt or 'ಹೆಸರು' in txt:
-                                        header_idx['owner'] = i
-                                if 'extent' not in header_idx:
-                                    if 'extent' in txt_lower or 'ವಿಸ್ತೀರ್ಣ' in txt:
-                                        header_idx['extent'] = i
-                            continue  # Skip header row
+                                    for i, txt in enumerate(cell_texts):
+                                        if 'name' in txt.lower() or 'ಹೆಸರು' in txt:
+                                            header_idx['owner'] = i
+                                            break
+                                
+                                header_found = True
+                                continue
                         
                         # Skip rows that look like form elements
                         is_form_row = any(pattern in row_text for pattern in FORM_KEYWORDS)
@@ -2625,20 +2647,18 @@ class SearchWorker:
                         if is_form_row or is_district_list:
                             continue
                         
-                        # Skip serial number only rows
+                        # Strip serial number from data rows
                         if SKIP_PATTERNS.match(cell_texts[0]):
-                            cell_texts = cell_texts[1:]  # Shift left, skip serial number
+                            cell_texts = cell_texts[1:]
                             if not cell_texts:
                                 continue
                         
-                        # 🔧 v7.0: Extract owner data - only owner_name and extent (no khatah)
                         owner_idx = header_idx.get('owner', 0)
                         extent_idx = header_idx.get('extent', 1)
                         
                         owner_name = cell_texts[owner_idx] if owner_idx < len(cell_texts) else ''
                         extent = cell_texts[extent_idx] if extent_idx < len(cell_texts) else ''
                         
-                        # Validate owner name
                         if not owner_name or len(owner_name) < 2:
                             continue
                         if owner_name.isdigit():
@@ -2651,7 +2671,6 @@ class SearchWorker:
                             'extent': extent,
                         }
                         
-                        # Avoid duplicates
                         if owner_entry not in owners:
                             owners.append(owner_entry)
             
@@ -3792,8 +3811,9 @@ class SearchWorker:
                 else:
                     # Other error - log and continue to next survey
                     self.errors += 1
-                    empty_count += 1
-                    # TRACK THIS GAP - unknown error on survey
+                    # v7.1 FIX: Do NOT increment empty_count here. Errors are
+                    # not empty surveys — inflating empty_count caused premature
+                    # SMART STOP that abandoned entire villages.
                     skip_record = {
                         'village': village_name,
                         'village_code': village_code,
@@ -3821,13 +3841,6 @@ class SearchWorker:
                         except Exception:
                             pass
                     survey_no += 1  # Move to next survey
-                    
-                    if (Config.SMART_STOP_ENABLED and 
-                        surveys_checked >= Config.MIN_SURVEYS_BEFORE_STOP and
-                        empty_count >= Config.EMPTY_SURVEY_THRESHOLD):
-                        completion_reason = 'smart_stop'
-                        self._add_log(f"🏁 SMART STOP (error recovery): {village_name}")
-                        break
         
         # ═══════════════════════════════════════════════════════════════════════════════
         # RETRY QUEUE PROCESSING - Second chance for skipped surveys
