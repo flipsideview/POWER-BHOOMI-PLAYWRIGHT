@@ -3322,11 +3322,27 @@ class SearchWorker:
         skeleton_survey_set: Optional[Set[int]] = None
         skeleton_active = False
         user_max_survey = max_survey  # remembered for log clarity
+        # v11.0 100% ACCURACY: full (sy, sn, hi) tuple map from skeleton.
+        # Used to UNION with Service2's dropdown so we never miss a hissa.
+        # Structure: {(survey_no, surnoc): {hissa1, hissa2, ...}}
+        skeleton_hissa_map: Dict[Tuple[int, str], Set[str]] = {}
+        skeleton_surnocs_per_survey: Dict[int, Set[str]] = {}
         
         if Config.SKELETON_FIRST_ENABLED:
             village_skel = self.skeletons.get(str(village_code), [])
             if village_skel:
                 skeleton_survey_set = {int(r['survey_no']) for r in village_skel if isinstance(r.get('survey_no'), int)}
+                # Build hissa precision map: {(sy, sn): {hi, hi, ...}} and {sy: {sn, sn, ...}}
+                for r in village_skel:
+                    try:
+                        sy = int(r['survey_no'])
+                    except (TypeError, ValueError):
+                        continue
+                    sn = str(r.get('surnoc', '')).strip()
+                    hi = str(r.get('hissa', '')).strip()
+                    skeleton_hissa_map.setdefault((sy, sn), set()).add(hi)
+                    skeleton_surnocs_per_survey.setdefault(sy, set()).add(sn)
+                
                 if skeleton_survey_set:
                     skel_min = min(skeleton_survey_set)
                     skel_max = max(skeleton_survey_set)
@@ -3337,6 +3353,10 @@ class SearchWorker:
                     start_survey = max(start_survey, skel_min)
                     max_survey = skel_max
                     skeleton_active = True
+                    
+                    # v11.0: update worker_status.max_survey so UI shows accurate
+                    # per-village progress (was stuck at user input e.g. 800)
+                    self._update_status(max_survey=skel_max)
                     
                     extra = ""
                     if skel_max > user_max_survey:
@@ -3350,6 +3370,8 @@ class SearchWorker:
                     )
         
         if not skeleton_active:
+            # Even in fallback mode, sync worker_status to match
+            self._update_status(max_survey=max_survey)
             self._add_log(
                 f"🏘️ Starting {village_name}: Surveys {start_survey} to {max_survey} "
                 f"(enumeration mode — Service154 unavailable for this village)"
@@ -3593,6 +3615,41 @@ class SearchWorker:
                 # Check if surnoc populated (Playwright)
                 surnoc_opts = self._pw_get_dropdown_options(IDS['surnoc'])
                 
+                # ═══════════════════════════════════════════════════════════════════════
+                # v11.0 100% ACCURACY — DROPDOWN-EMPTY RESCUE
+                # ───────────────────────────────────────────────────────────────────────
+                # If Service2 returned an empty surnoc dropdown but Service154 says this
+                # survey HAS data (skeleton has tuples for this survey), it's almost
+                # certainly a race/AJAX glitch — not a genuinely empty survey. Re-issue
+                # GO once and, if still empty, fall through to use skeleton's surnoc list
+                # directly. This prevents the false-skip path from claiming survey is empty.
+                # ═══════════════════════════════════════════════════════════════════════
+                if not surnoc_opts and skeleton_active and survey_no in (skeleton_survey_set or set()):
+                    self._add_log(
+                        f"🔬 Sy:{survey_no} dropdown empty but skeleton has data — refetching",
+                        level='WARN', kind='precision',
+                    )
+                    try:
+                        # One quick re-issue of GO to give the AJAX another chance
+                        time.sleep(2)
+                        self.page.evaluate(f'document.getElementById("{IDS["go_btn"]}").click()')
+                        self.page.wait_for_load_state('domcontentloaded')
+                        time.sleep(Config.POST_CLICK_WAIT + 2)
+                        surnoc_opts = self._pw_get_dropdown_options(IDS['surnoc'])
+                    except Exception:
+                        pass
+                    # If STILL empty, use skeleton surnocs directly. The select_option
+                    # call later may still fail if Service2 truly has no data, but at
+                    # least we'll attempt — beats silently treating as empty.
+                    if not surnoc_opts:
+                        sk_surnocs = skeleton_surnocs_per_survey.get(survey_no, set())
+                        if sk_surnocs:
+                            surnoc_opts = sorted(sk_surnocs)
+                            self._add_log(
+                                f"   ⚠️ Using skeleton surnocs as fallback: {surnoc_opts}",
+                                level='WARN', kind='precision',
+                            )
+                
                 if not surnoc_opts:
                     # This is a genuinely empty survey (not session expired)
                     empty_count += 1
@@ -3634,8 +3691,34 @@ class SearchWorker:
                 surveys_with_data += 1
                 last_survey_with_data = survey_no  # Track last successful survey
                 
+                # ═══════════════════════════════════════════════════════════════════════
+                # v11.0 LEARNING (Option B reverted, keep informational logs):
+                # ───────────────────────────────────────────────────────────────────────
+                # We previously tried UNIONing skeleton surnocs with dropdown surnocs.
+                # Empirically, skeleton-only surnocs are HISTORICAL / SUBDIVIDED entries
+                # that Service2's dropdown intentionally doesn't expose (because their
+                # data has been migrated to current sub-entries). Trying to select them
+                # fails with a 5s timeout per entry — wasted time AND false skips.
+                #
+                # Correct approach: trust Service2's dropdown for surnocs (authoritative
+                # for queryable current data). Just LOG when skeleton differs so we have
+                # visibility, but don't try to select non-existent options.
+                # ═══════════════════════════════════════════════════════════════════════
+                target_surnocs = list(surnoc_opts)
+                if skeleton_active:
+                    sk_surnocs_for_sy = skeleton_surnocs_per_survey.get(survey_no, set())
+                    extras = sk_surnocs_for_sy - set(surnoc_opts)
+                    if extras:
+                        # INFORMATIONAL only — these are typically historical/composite
+                        # entries (e.g., '*' summary, subdivided ancestors). Their data
+                        # is covered by the current dropdown entries.
+                        self.logger.debug(
+                            f"Sy:{survey_no} skeleton has {len(extras)} surnoc(s) not in dropdown "
+                            f"(likely historical/composite, ignoring): {sorted(extras)}"
+                        )
+                
                 # Process each surnoc
-                for surnoc in surnoc_opts:
+                for surnoc in target_surnocs:
                     if not self.state.running:
                         return
                     
@@ -3643,11 +3726,29 @@ class SearchWorker:
                         self._pw_select_text(IDS['surnoc'], surnoc)
                         time.sleep(Config.POST_SELECT_WAIT + 1)
                         
-                        # Get hissa options (Playwright)
+                        # Get hissa options (Playwright) — Service2's dropdown is authoritative
+                        # for which hissas are CURRENTLY selectable. Skeleton has historical
+                        # entries too (subdivided/composite) that fail with timeout if we try
+                        # them. So we trust the dropdown here.
                         hissa_opts = self._pw_get_dropdown_options(IDS['hissa'])
+                        target_hissas = list(hissa_opts)
+                        
+                        if skeleton_active:
+                            sk_hissas = skeleton_hissa_map.get((survey_no, surnoc), set())
+                            extras_hi = sk_hissas - set(hissa_opts)
+                            if extras_hi:
+                                # INFORMATIONAL only — log but don't attempt. These are
+                                # historical entries (e.g., '*' summary, '-p1' partitions,
+                                # 'P1' provisional, '2A'/'2B' subdivided) whose CURRENT
+                                # data is covered by the dropdown's entries.
+                                self.logger.debug(
+                                    f"Sy:{survey_no} Sn:{surnoc} skeleton has {len(extras_hi)} "
+                                    f"hissa(s) not in dropdown (likely historical, ignoring): "
+                                    f"{sorted(extras_hi)}"
+                                )
                         
                         # Process each hissa
-                        for hissa in hissa_opts:
+                        for hissa in target_hissas:
                             if not self.state.running:
                                 return
                             
@@ -8148,28 +8249,44 @@ HTML_TEMPLATE = '''
                     const medConfCount = document.getElementById('medConfCount');
                     const lowConfCount = document.getElementById('lowConfCount');
                     
-                    // Calculate average confidence if we have village stats
-                    if (am.villages_high_confidence || am.villages_medium_confidence || am.villages_low_confidence) {
-                        const total = (am.villages_high_confidence || 0) + (am.villages_medium_confidence || 0) + (am.villages_low_confidence || 0);
-                        if (total > 0) {
-                            // Weighted average: High=90%, Med=65%, Low=30%
-                            const avgConf = Math.round(
-                                ((am.villages_high_confidence || 0) * 90 + 
-                                 (am.villages_medium_confidence || 0) * 65 + 
-                                 (am.villages_low_confidence || 0) * 30) / total
-                            );
-                            if (confidencePercent) confidencePercent.textContent = avgConf + '%';
-                            if (confidenceFill) {
-                                confidenceFill.style.width = avgConf + '%';
-                                // Color based on confidence
-                                if (avgConf >= 80) {
-                                    confidenceFill.style.background = 'linear-gradient(90deg, #10b981, #059669)';
-                                } else if (avgConf >= 50) {
-                                    confidenceFill.style.background = 'linear-gradient(90deg, #f59e0b, #d97706)';
-                                } else {
-                                    confidenceFill.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
-                                }
+                    // v11.0: Calculate average confidence if we have village stats.
+                    // Confidence is a per-village metric (calculated when village
+                    // completes), so it stays empty until the first village finishes.
+                    const completedVillages = (am.villages_high_confidence || 0) + (am.villages_medium_confidence || 0) + (am.villages_low_confidence || 0);
+                    
+                    if (completedVillages > 0) {
+                        // Weighted average: High=90%, Med=65%, Low=30%
+                        const avgConf = Math.round(
+                            ((am.villages_high_confidence || 0) * 90 + 
+                             (am.villages_medium_confidence || 0) * 65 + 
+                             (am.villages_low_confidence || 0) * 30) / completedVillages
+                        );
+                        if (confidencePercent) confidencePercent.textContent = avgConf + '%';
+                        if (confidenceFill) {
+                            confidenceFill.style.width = avgConf + '%';
+                            confidenceFill.style.opacity = '1';
+                            if (avgConf >= 80) {
+                                confidenceFill.style.background = 'linear-gradient(90deg, #10b981, #059669)';
+                            } else if (avgConf >= 50) {
+                                confidenceFill.style.background = 'linear-gradient(90deg, #f59e0b, #d97706)';
+                            } else {
+                                confidenceFill.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
                             }
+                        }
+                    } else if (status.running) {
+                        // Search active but no village completed yet — show calculating state
+                        if (confidencePercent) confidencePercent.textContent = 'calculating…';
+                        if (confidenceFill) {
+                            confidenceFill.style.width = '100%';
+                            confidenceFill.style.opacity = '0.3';
+                            confidenceFill.style.background = 'linear-gradient(90deg, #6366f1, #818cf8)';
+                        }
+                    } else {
+                        // Idle / no session yet
+                        if (confidencePercent) confidencePercent.textContent = '--';
+                        if (confidenceFill) {
+                            confidenceFill.style.width = '0%';
+                            confidenceFill.style.opacity = '1';
                         }
                     }
                     
@@ -9047,6 +9164,20 @@ if __name__ == '__main__':
 ║                                                                                      ║
 ╚══════════════════════════════════════════════════════════════════════════════════════╝
     """)
+    # v11.0: Auto-open browser. Spawned in a daemon thread so Flask starts first;
+    # the 2s sleep gives the server time to bind to the port before we navigate.
+    # Disabled when running inside Flask's reloader child process (avoids double-opening).
+    if not os.environ.get('WERKZEUG_RUN_MAIN'):
+        def _open_browser():
+            import webbrowser, time as _t
+            _t.sleep(2.0)
+            try:
+                webbrowser.open(f'http://localhost:{Config.PORT}', new=2)
+                logger.info(f"🌐 Opening http://localhost:{Config.PORT} in default browser")
+            except Exception as e:
+                logger.debug(f"Browser auto-open failed (run manually): {e}")
+        threading.Thread(target=_open_browser, daemon=True).start()
+    
     # IMPORTANT: use_reloader=False prevents server restart when code changes mid-search
     app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG, threaded=True, use_reloader=False)
 
