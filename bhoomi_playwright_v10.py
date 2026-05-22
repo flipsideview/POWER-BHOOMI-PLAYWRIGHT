@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║     POWER-BHOOMI v11.0 - SKELETON-FIRST EDITION (Service154+Service2 hybrid)      ║
+║     POWER-BHOOMI v10.0 - PRODUCTION EDITION (24 workers, accuracy-first)          ║
 ║                  Karnataka Land Records Search Tool - Playwright Edition             ║
 ╠══════════════════════════════════════════════════════════════════════════════════════╣
 ║  PRODUCTION FEATURES:                                                                ║
@@ -15,19 +15,13 @@
 ║  • Thread-safe CSV + SQLite persistence with deduplication                           ║
 ║  • LATEST PERIOD ONLY - Extracts only the most recent period                        ║
 ║                                                                                      ║
-║  v11.0 ENHANCEMENTS over v10:                                                        ║
-║  - Service154 skeleton API: enumerate ALL valid (Survey, Surnoc, Hissa) tuples       ║
-║    per village in ONE HTTP call (no captcha, no auth, plain JSON)                    ║
-║  - Skeleton-first scraping: drive Service2 fetches off the exact Service154 list,    ║
-║    eliminating "guess survey 1..N" enumeration                                       ║
-║  - No more smart-stop blind spots: villages with data at high survey numbers         ║
-║    (e.g., survey 200+) are no longer abandoned                                       ║
-║  - Graceful fallback: if Service154 is unreachable per village, falls back to        ║
-║    v10's enumeration logic                                                           ║
-║  - Increased log retention (30 -> 500) for better state replay                       ║
-║                                                                                       ║
-║  Carried forward from v10: 24 workers, no-owner refetch, CSV pre-creation,           ║
-║  SSL bypass, Phase 2 auto-retry, deadlock-free completion.                           ║
+║  v10.0 ENHANCEMENTS over v9:                                                         ║
+║  - 24 worker high-concurrency mode (up from 12)                                      ║
+║  - CSV files always pre-created (header written even if 0 records)                   ║
+║  - No-owner re-fetch retry (recovers ~95% of false-positive "empty" pages)           ║
+║  - Tuned rate limiter & timing for 24 workers                                        ║
+║  - Expanded DB connection pool                                                        ║
+║  - Active wait for owner table render (instead of fixed sleep)                       ║
 ║  • PHASE 2 AUTO-RETRY: Automatically retries all skipped surveys after Phase 1      ║
 ║  • DB DEDUPLICATION: UNIQUE constraint prevents duplicate records                    ║
 ║  • FIX: Selenium API remnants replaced with Playwright equivalents                   ║
@@ -51,7 +45,7 @@ import threading
 import queue
 import platform
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Any, Set
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field, asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -72,7 +66,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ═══════════════════════════════════════════════════════════════════════════════════════
 
 class Config:
-    """Enterprise configuration for v11.0 — skeleton-first hybrid (S154 + S2)"""
+    """Enterprise configuration for v10.0 — 24 workers, accuracy-first production"""
     # Server
     HOST = '0.0.0.0'
     PORT = 5001
@@ -168,35 +162,6 @@ class Config:
     ECHAWADI_BASE = "https://rdservices.karnataka.gov.in/echawadi/Home"
     SERVICE2_URL = "https://landrecords.karnataka.gov.in/Service2/"
     
-    # ═══════════════════════════════════════════════════════════════════════════════════
-    # SERVICE154 SKELETON CLIENT (v11.0)
-    # ───────────────────────────────────────────────────────────────────────────────────
-    # Service154 (RTC + Mutation Extract Beta) exposes plain JSON APIs to enumerate
-    # the EXACT (Survey, Surnoc, Hissa) tuples that exist in any village. We use this
-    # as a "skeleton provider" so the Service2 browser scraper no longer has to guess
-    # survey numbers 1..N. This eliminates smart-stop blind spots (villages whose data
-    # starts at survey 200+) and removes most empty-survey waste.
-    #
-    # IMPORTANT: We DO NOT touch Service154's encrypted RTC PDFs — owner data still
-    # comes from Service2's plain HTML. Service154 is purely an index/skeleton source.
-    # ═══════════════════════════════════════════════════════════════════════════════════
-    SERVICE154_BASE = "https://landrecords.karnataka.gov.in/Service154/Home"
-    SKELETON_FIRST_ENABLED = True       # Master toggle — set False to revert to v10 enumeration
-    SKELETON_FETCH_TIMEOUT = 30         # HTTP timeout (seconds) for each Service154 call
-    SKELETON_MAX_RETRIES = 3            # Retries per village if Service154 fails transiently
-    SKELETON_PARALLEL_WORKERS = 8       # Threads for parallel skeleton pre-fetch
-    SKELETON_FALLBACK_ON_FAIL = True    # If skeleton fetch fails, fall back to enumeration
-    SKELETON_CACHE_TTL_SECONDS = 3600   # Cache skeletons for 1 hour (re-fetch if older)
-    
-    # ═══════════════════════════════════════════════════════════════════════════════════
-    # UI STATE RETENTION (v11.0)
-    # ───────────────────────────────────────────────────────────────────────────────────
-    # Larger retention so a browser refresh doesn't lose context.
-    # ═══════════════════════════════════════════════════════════════════════════════════
-    LOG_RETENTION_COUNT = 500           # Logs kept in memory (was 30 in v10)
-    RECORDS_BUFFER_COUNT = 500          # Records kept in memory for UI (was 100 in v10)
-    MATCHES_BUFFER_COUNT = 200          # Matches kept in memory for UI (was 50 in v10)
-    
     # Element IDs (Bhoomi Portal)
     ELEMENT_IDS = {
         'district': 'ctl00_MainContent_ddlCDistrict',
@@ -210,267 +175,6 @@ class Config:
         'go_btn': 'ctl00_MainContent_btnCGo',
         'fetch_btn': 'ctl00_MainContent_btnCFetchDetails',
     }
-
-
-# ═══════════════════════════════════════════════════════════════════════════════════════
-# SERVICE154 SKELETON CLIENT (v11.0)
-# ───────────────────────────────────────────────────────────────────────────────────────
-# Pure-HTTP client for Service154's enumeration endpoints. NO browser, NO captcha,
-# NO encrypted-PDF handling. We use Service154 only to fetch the authoritative list
-# of (Survey, Surnoc, Hissa, LandCode) tuples per village; owner extraction continues
-# to use Service2 (browser-driven, plain HTML response).
-#
-# Endpoints used (verified May 2026, no auth/captcha required):
-#     POST /Service154/Home/FillCensusDistrict          -> [{DISTRICT_CODE, DISTRICT_NAME}, ...]
-#     POST /Service154/Home/FillCensusTALUKA            -> [{TALUKA_CODE, TALUKA_NAME}, ...]
-#     POST /Service154/Home/FillCensushobli             -> [{HOBLI_CODE, HOBLI_NAME}, ...]
-#     POST /Service154/Home/FillCensusvillege           -> [{VILLAGE_CODE, VILLAGE_NAME}, ...]
-#     POST /Service154/Home/Fn_GetMRSurveyDataVillageWise
-#         -> HTML page with embedded `var originalCardData = [...]` JSON array of
-#            {Survey, Surnoc, Hissa, LandCode, SurveySurnocHissa, ...}
-# ═══════════════════════════════════════════════════════════════════════════════════════
-
-import re as _re_skel  # local alias to avoid clobbering module-level `re`
-
-class Service154Client:
-    """
-    Thread-safe HTTP client for Service154's skeleton endpoints.
-    
-    All instances share a single `requests.Session` for connection pooling.
-    Handles transient failures with bounded exponential backoff and falls back
-    gracefully (returns empty list) if Service154 is permanently unreachable —
-    callers should treat empty skeleton as "use enumeration fallback".
-    
-    NOT a heavy dependency: this is ~150 LOC of pure-HTTP wrapping; it does
-    not require Playwright, browser instances, or any persistent state. Safe
-    to instantiate per-coordinator or as a module-level singleton.
-    """
-    
-    # ──────────────────────────────────────────────────────────────────────────
-    # Embedded JSON regex — Service154's village-survey endpoint returns an HTML
-    # page with the actual data in `var originalCardData = [...]`. We extract
-    # the JSON via a non-greedy match anchored to the variable declaration.
-    # ──────────────────────────────────────────────────────────────────────────
-    _CARD_DATA_PATTERN = _re_skel.compile(
-        r'var\s+originalCardData\s*=\s*(\[.*?\]);',
-        _re_skel.DOTALL,
-    )
-    
-    def __init__(
-        self,
-        base_url: str = None,
-        timeout: float = None,
-        max_retries: int = None,
-    ):
-        self.base_url = (base_url or Config.SERVICE154_BASE).rstrip('/')
-        self.timeout = timeout if timeout is not None else Config.SKELETON_FETCH_TIMEOUT
-        self.max_retries = max_retries if max_retries is not None else Config.SKELETON_MAX_RETRIES
-        
-        # Connection-pooled session shared across calls (HTTPAdapter handles
-        # concurrency safely). verify=False — Bhoomi cert sometimes expires;
-        # we already accept that risk in the Playwright path.
-        self._session = requests.Session()
-        self._session.verify = False
-        self._session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (compatible; PowerBhoomi/v11.0)',
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Referer': 'https://landrecords.karnataka.gov.in/service154',
-        })
-        
-        # Suppress urllib3 warnings about verify=False
-        try:
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        except Exception:
-            pass
-        
-        # Optional in-memory cache: {(district, taluk, hobli, village): (timestamp, data)}
-        self._cache: Dict[Tuple[str, str, str, str], Tuple[float, List[Dict]]] = {}
-        self._cache_lock = threading.Lock()
-        self._cache_ttl = Config.SKELETON_CACHE_TTL_SECONDS
-    
-    # ──────────────────────────────────────────────────────────────────────────
-    # LOW-LEVEL: single POST with retry + JSON-or-string parsing.
-    # ──────────────────────────────────────────────────────────────────────────
-    def _post(
-        self,
-        endpoint: str,
-        data: Any,
-        as_json_body: bool = False,
-    ) -> Optional[Any]:
-        """
-        POST to a Service154 endpoint. Handles two body styles:
-          - as_json_body=True : Content-Type application/json, body is json.dumps(data)
-          - as_json_body=False: form-encoded multipart, requests' default
-        
-        Returns parsed JSON response (auto-handles double-encoded strings),
-        or None if all retries exhausted.
-        """
-        url = f"{self.base_url}/{endpoint.lstrip('/')}"
-        
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                if as_json_body:
-                    resp = self._session.post(
-                        url,
-                        data=json.dumps(data),
-                        headers={'Content-Type': 'application/json; charset=utf-8'},
-                        timeout=self.timeout,
-                    )
-                else:
-                    resp = self._session.post(url, data=data, timeout=self.timeout)
-                
-                if resp.status_code != 200:
-                    logger.debug(f"S154 {endpoint} attempt {attempt}: HTTP {resp.status_code}")
-                    if attempt < self.max_retries:
-                        time.sleep(min(2 ** attempt, 10))
-                        continue
-                    return None
-                
-                # Service154 sometimes returns a JSON-encoded string of JSON
-                # (e.g., '"[{...}]"'). Unwrap defensively.
-                payload = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else None
-                if payload is None:
-                    # try parsing the text as JSON
-                    try:
-                        payload = json.loads(resp.text)
-                    except json.JSONDecodeError:
-                        return resp.text  # caller may want raw HTML (e.g. Fn_GetMRSurveyDataVillageWise)
-                
-                if isinstance(payload, str):
-                    try:
-                        payload = json.loads(payload)
-                    except json.JSONDecodeError:
-                        pass
-                
-                return payload
-            
-            except (requests.RequestException, ValueError) as e:
-                logger.debug(f"S154 {endpoint} attempt {attempt}/{self.max_retries}: {type(e).__name__}: {str(e)[:80]}")
-                if attempt < self.max_retries:
-                    time.sleep(min(2 ** attempt, 10))
-        
-        return None
-    
-    # ──────────────────────────────────────────────────────────────────────────
-    # HIGH-LEVEL: skeleton fetch (the only call that matters for v11 scraping).
-    # ──────────────────────────────────────────────────────────────────────────
-    def fetch_village_skeleton(
-        self,
-        district_code: str,
-        taluk_code: str,
-        hobli_code: str,
-        village_code: str,
-    ) -> List[Dict[str, Any]]:
-        """
-        Fetch the authoritative list of (Survey, Surnoc, Hissa, LandCode) tuples
-        that exist in the given village. Uses Service154's
-        Fn_GetMRSurveyDataVillageWise endpoint and parses the embedded
-        `originalCardData` JSON array.
-        
-        Returns:
-            List of dicts: [{'survey_no': int, 'surnoc': str, 'hissa': str,
-                             'land_code': str, 'survey_surnoc_hissa': str}, ...]
-            Empty list on failure (caller should fall back to enumeration).
-        
-        Thread-safe; cached per (district, taluk, hobli, village) for
-        Config.SKELETON_CACHE_TTL_SECONDS.
-        """
-        cache_key = (str(district_code), str(taluk_code), str(hobli_code), str(village_code))
-        
-        with self._cache_lock:
-            cached = self._cache.get(cache_key)
-            if cached and (time.time() - cached[0]) < self._cache_ttl:
-                return list(cached[1])  # defensive copy
-        
-        payload = self._post(
-            'Fn_GetMRSurveyDataVillageWise',
-            data={
-                'District': str(district_code),
-                'Taluk': str(taluk_code),
-                'Hobli': str(hobli_code),
-                'Village': str(village_code),
-            },
-            as_json_body=False,  # this endpoint uses form-encoded
-        )
-        
-        if not isinstance(payload, str):
-            return []  # unexpected response shape
-        
-        match = self._CARD_DATA_PATTERN.search(payload)
-        if not match:
-            return []
-        
-        try:
-            raw_records = json.loads(match.group(1))
-        except json.JSONDecodeError as e:
-            logger.warning(f"S154 skeleton JSON parse failed for {cache_key}: {e}")
-            return []
-        
-        # Normalize: trim whitespace from Surnoc/Hissa (S154 pads with spaces),
-        # coerce types, and dedup by (survey, surnoc, hissa) since S154 sometimes
-        # returns duplicate rows with different LandCode for the same logical key.
-        normalized: List[Dict[str, Any]] = []
-        seen: set = set()
-        for r in raw_records:
-            if not isinstance(r, dict):
-                continue
-            try:
-                sy = int(r.get('Survey', 0))
-            except (TypeError, ValueError):
-                continue
-            sn = str(r.get('Surnoc', '')).strip()
-            hi = str(r.get('Hissa', '')).strip()
-            land_code = str(r.get('LandCode', ''))
-            ssh = str(r.get('SurveySurnocHissa', f"{sy}{sn}{hi}")).strip()
-            
-            key = (sy, sn, hi)
-            if key in seen:
-                continue
-            seen.add(key)
-            
-            normalized.append({
-                'survey_no': sy,
-                'surnoc': sn,
-                'hissa': hi,
-                'land_code': land_code,
-                'survey_surnoc_hissa': ssh,
-            })
-        
-        # Sort: (survey_no, surnoc, hissa) — deterministic order helps with
-        # checkpointing and resume.
-        normalized.sort(key=lambda r: (r['survey_no'], r['surnoc'], r['hissa']))
-        
-        with self._cache_lock:
-            self._cache[cache_key] = (time.time(), list(normalized))
-        
-        return normalized
-    
-    def clear_cache(self) -> None:
-        """Drop all cached skeletons. Useful after a long pause."""
-        with self._cache_lock:
-            self._cache.clear()
-    
-    def is_reachable(self) -> bool:
-        """Quick health check — returns True if Service154 responds within timeout."""
-        result = self._post('FillCensusDistrict', data={}, as_json_body=False)
-        return isinstance(result, list) and len(result) > 0
-
-
-# Module-level singleton — instantiated lazily on first use.
-_service154_client_singleton: Optional[Service154Client] = None
-_service154_client_lock = threading.Lock()
-
-def get_service154_client() -> Service154Client:
-    """Return the process-wide Service154Client singleton."""
-    global _service154_client_singleton
-    if _service154_client_singleton is None:
-        with _service154_client_lock:
-            if _service154_client_singleton is None:
-                _service154_client_singleton = Service154Client()
-    return _service154_client_singleton
-
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # BROWSER CLEANUP UTILITY - CRITICAL FOR STABILITY
@@ -1950,29 +1654,6 @@ class DatabaseManager:
                 ''')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_checkpoint_session_village ON survey_checkpoints(session_id, village_code)')
                 
-                # ═══════════════════════════════════════════════════════════════════
-                # v11.0 EVENT LOGS — every UI log line persisted with structure
-                # ═══════════════════════════════════════════════════════════════════
-                # Solves the "close browser, lose context" problem. Every log entry
-                # is queried by `since_id` for incremental UI updates, and survives
-                # server restarts. Structured fields enable filtering by level/worker
-                # /village without parsing emoji-prefixed strings.
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS event_logs (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        session_id TEXT NOT NULL,
-                        ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        level TEXT DEFAULT 'INFO',           -- DEBUG/INFO/WARN/ERROR/MATCH/PHASE
-                        worker_id INTEGER,                   -- nullable
-                        village TEXT,                        -- nullable
-                        kind TEXT,                           -- e.g. 'progress','retry','skip','match'
-                        message TEXT NOT NULL,
-                        FOREIGN KEY (session_id) REFERENCES search_sessions(session_id)
-                    )
-                ''')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_logs_session_id ON event_logs(session_id, id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_logs_level ON event_logs(session_id, level)')
-                
                 # Version tracking
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS db_meta (
@@ -2350,146 +2031,6 @@ class DatabaseManager:
             }
     
     # ═══════════════════════════════════════════════════════════════════════════════════
-    # v11.0 EVENT LOG PERSISTENCE — solves "close browser, lose state"
-    # ═══════════════════════════════════════════════════════════════════════════════════
-    
-    def save_event_log(
-        self,
-        session_id: str,
-        message: str,
-        level: str = 'INFO',
-        worker_id: Optional[int] = None,
-        village: Optional[str] = None,
-        kind: Optional[str] = None,
-    ) -> Optional[int]:
-        """
-        Persist a single log entry. Returns the auto-incremented row id (used by UI
-        for incremental polling via `since_id`). Returns None on failure.
-        Designed for high-frequency calls (one per worker log line); uses the
-        connection pool for low overhead.
-        """
-        try:
-            with self.get_connection() as conn:
-                cur = conn.cursor()
-                cur.execute('''
-                    INSERT INTO event_logs (session_id, level, worker_id, village, kind, message)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (session_id, level, worker_id, village, kind, message[:2000]))
-                return cur.lastrowid
-        except Exception as e:
-            logger.debug(f"save_event_log failed: {e}")
-            return None
-    
-    def get_logs_after(
-        self,
-        session_id: str,
-        since_id: int = 0,
-        limit: int = 500,
-        level_filter: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Fetch logs for a session whose id > since_id. Used by the UI's incremental
-        polling. The UI sends back the highest id it's seen, gets only newer rows.
-        Returns at most `limit` rows ordered by id ascending.
-        """
-        try:
-            with self.get_connection() as conn:
-                cur = conn.cursor()
-                if level_filter:
-                    cur.execute('''
-                        SELECT id, ts, level, worker_id, village, kind, message
-                        FROM event_logs
-                        WHERE session_id = ? AND id > ? AND level = ?
-                        ORDER BY id ASC
-                        LIMIT ?
-                    ''', (session_id, since_id, level_filter, limit))
-                else:
-                    cur.execute('''
-                        SELECT id, ts, level, worker_id, village, kind, message
-                        FROM event_logs
-                        WHERE session_id = ? AND id > ?
-                        ORDER BY id ASC
-                        LIMIT ?
-                    ''', (session_id, since_id, limit))
-                return [dict(row) for row in cur.fetchall()]
-        except Exception as e:
-            logger.debug(f"get_logs_after failed: {e}")
-            return []
-    
-    def count_logs(self, session_id: str) -> int:
-        """Total log count for a session (for UI display 'showing N of M')."""
-        try:
-            with self.get_connection() as conn:
-                cur = conn.cursor()
-                cur.execute('SELECT COUNT(*) FROM event_logs WHERE session_id = ?', (session_id,))
-                return cur.fetchone()[0]
-        except Exception:
-            return 0
-    
-    # ═══════════════════════════════════════════════════════════════════════════════════
-    # v11.0 RECORD PAGINATION — UI loads any chunk on demand
-    # ═══════════════════════════════════════════════════════════════════════════════════
-    
-    def get_records_paginated(
-        self,
-        session_id: str,
-        offset: int = 0,
-        limit: int = 200,
-        matches_only: bool = False,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """
-        Return (records, total_count). The total_count is how many records this
-        session has total — UI uses it for pagination math.
-        """
-        try:
-            with self.get_connection() as conn:
-                cur = conn.cursor()
-                where_match = 'AND is_match = 1' if matches_only else ''
-                cur.execute(f'''
-                    SELECT COUNT(*) FROM land_records WHERE session_id = ? {where_match}
-                ''', (session_id,))
-                total = cur.fetchone()[0]
-                
-                cur.execute(f'''
-                    SELECT id, district, taluk, hobli, village, survey_no, surnoc, hissa,
-                           period, owner_name, extent, is_match, worker_id, created_at
-                    FROM land_records
-                    WHERE session_id = ? {where_match}
-                    ORDER BY id DESC
-                    LIMIT ? OFFSET ?
-                ''', (session_id, limit, offset))
-                rows = [dict(r) for r in cur.fetchall()]
-                return rows, total
-        except Exception as e:
-            logger.debug(f"get_records_paginated failed: {e}")
-            return [], 0
-    
-    # ═══════════════════════════════════════════════════════════════════════════════════
-    # v11.0 STARTUP HOUSEKEEPING — mark stale 'running' sessions as interrupted
-    # ═══════════════════════════════════════════════════════════════════════════════════
-    
-    def mark_interrupted_sessions(self) -> int:
-        """
-        Called once at server startup. Any session still flagged 'running' from a
-        previous process is logically dead — flip it to 'interrupted' so the UI
-        doesn't lie about it being live. Returns count of sessions reset.
-        """
-        try:
-            with self.get_connection() as conn:
-                cur = conn.cursor()
-                cur.execute('''
-                    UPDATE search_sessions
-                    SET status = 'interrupted',
-                        completed_at = CURRENT_TIMESTAMP,
-                        notes = COALESCE(notes, '') || ' [auto-marked interrupted on server restart]'
-                    WHERE status = 'running'
-                ''')
-                return cur.rowcount
-        except Exception as e:
-            logger.warning(f"mark_interrupted_sessions failed: {e}")
-            return 0
-    
-    # ═══════════════════════════════════════════════════════════════════════════════════
     # EXPORT FUNCTIONS
     # ═══════════════════════════════════════════════════════════════════════════════════
     
@@ -2683,8 +2224,7 @@ class SearchWorker:
         matches_writer: ThreadSafeCSVWriter,
         state_lock: threading.Lock,
         db: DatabaseManager = None,  # Persistent database
-        session_id: str = None,  # Current search session ID
-        skeletons: Dict[str, List[Dict]] = None,  # v11: pre-fetched Service154 skeletons
+        session_id: str = None  # Current search session ID
     ):
         self.worker_id = worker_id
         self.params = search_params
@@ -2693,7 +2233,6 @@ class SearchWorker:
         self.all_records_writer = all_records_writer
         self.matches_writer = matches_writer
         self.state_lock = state_lock
-        self.skeletons = skeletons or {}  # v11: {village_code: [{survey_no, surnoc, hissa, ...}]}
         
         # Database integration
         self.db = db
@@ -2722,40 +2261,15 @@ class SearchWorker:
                         setattr(worker_status, key, value)
                 worker_status.last_update = datetime.now().isoformat()
     
-    def _add_log(self, message: str, level: str = 'INFO', kind: Optional[str] = None,
-                 village: Optional[str] = None):
-        """
-        Thread-safe log addition. v11.0: also persisted to DB asynchronously
-        so the UI can query the full backlog after a browser refresh / restart.
-        
-        Args:
-            message: log text (display unchanged for backward compat)
-            level: INFO / WARN / ERROR / MATCH / PHASE — used for filtering
-            kind: tag like 'progress', 'retry', 'skip', 'match' — used for UI styling
-            village: optional village name for filtering
-        """
+    def _add_log(self, message: str):
+        """Thread-safe log addition"""
         with self.state_lock:
             log_entry = f"[W{self.worker_id}] {message}"
             self.state.logs.append(log_entry)
-            # v11.0: keep last LOG_RETENTION_COUNT in memory (was hard-coded 100)
-            if len(self.state.logs) > Config.LOG_RETENTION_COUNT:
-                self.state.logs = self.state.logs[-Config.LOG_RETENTION_COUNT:]
+            # Keep only last 100 logs
+            if len(self.state.logs) > 100:
+                self.state.logs = self.state.logs[-100:]
         self.logger.info(message)
-        
-        # v11.0: persist to DB so closing/reopening the browser preserves history
-        if self.db and self.session_id:
-            try:
-                self.db.save_event_log(
-                    session_id=self.session_id,
-                    message=log_entry,
-                    level=level,
-                    worker_id=self.worker_id,
-                    village=village,
-                    kind=kind,
-                )
-            except Exception:
-                # Never let logging failures impact scraping
-                pass
     
     def _update_global_stats(self):
         """Update global statistics"""
@@ -3051,93 +2565,6 @@ class SearchWorker:
             self.logger.debug(f"Error selecting '{text[:50]}' in {selector_id}: {str(e)[:100]}")
             raise
     
-    def _safe_select_with_recovery(
-        self,
-        dropdown_id: str,
-        target_value: str,
-        survey_no: Optional[int] = None,
-        re_select_chain: Optional[Dict[str, str]] = None,
-        max_retries: int = 3,
-    ) -> bool:
-        """
-        v11.0: Robust dropdown selection with progressive recovery.
-        
-        Why this exists: Service2's WebForms dropdowns are AJAX-driven and can
-        race under 24-worker concurrency. A single `select_option` timeout was
-        causing 1,172 false-skip "Surnoc error: timeout" failures in production.
-        
-        Recovery strategy (per attempt):
-            1. Verify option is currently in dropdown (poll up to 3s)
-            2. If present, attempt select with 5s timeout
-            3. On failure, re-issue GO click to refresh dropdown state
-            4. On second failure, full re-navigation chain (re-select location)
-            5. After max_retries, return False (caller decides what to do)
-        
-        Returns True if selection succeeded, False if all attempts exhausted.
-        Never raises — caller can rely on bool return for control flow.
-        
-        Args:
-            dropdown_id: HTML id of the <select> element
-            target_value: visible text we want to pick
-            survey_no: if set, attempt 2 will re-issue GO with this survey number
-            re_select_chain: optional {dropdown_id: value} map to re-select for
-                             attempt 3 (e.g., {district_id: "21", taluk_id: "3"})
-            max_retries: total attempts (default 3)
-        """
-        IDS = Config.ELEMENT_IDS
-        last_error: Optional[str] = None
-        
-        for attempt in range(1, max_retries + 1):
-            try:
-                # Phase A: verify option is actually in the dropdown right now
-                # (cheap — bounded by 3s poll, returns immediately if present)
-                opts = self._pw_get_dropdown_options(dropdown_id, max_wait=3, poll_interval=0.3)
-                option_present = (
-                    target_value in opts or
-                    any(o.strip() == str(target_value).strip() for o in opts)
-                )
-                
-                if option_present:
-                    # Phase B: actual select (5s timeout from _pw_select_text)
-                    self._pw_select_text(dropdown_id, target_value)
-                    if attempt > 1:
-                        self._add_log(
-                            f"   ✅ Recovered: select '{target_value}' on attempt {attempt}/{max_retries}",
-                            level='INFO', kind='select_recovery',
-                        )
-                    return True
-                else:
-                    last_error = f"Option '{target_value}' not present in dropdown (got: {opts[:5]})"
-            
-            except Exception as e:
-                last_error = str(e)[:80]
-            
-            # Phase C: recovery — escalate per attempt
-            if attempt < max_retries:
-                if attempt == 1:
-                    # Attempt 2: brief wait, AJAX may still be in flight
-                    time.sleep(2)
-                elif attempt == 2 and survey_no is not None:
-                    # Attempt 3: re-issue GO to refresh the dropdown state
-                    try:
-                        self.page.fill(f'#{IDS["survey_no"]}', str(survey_no))
-                        _global_rate_limiter.acquire()
-                        self.page.evaluate(f'document.getElementById("{IDS["go_btn"]}").click()')
-                        self.page.wait_for_load_state('domcontentloaded')
-                        time.sleep(Config.POST_CLICK_WAIT)
-                    except Exception:
-                        # If even GO fails, try a soft sleep
-                        time.sleep(2)
-                else:
-                    time.sleep(1)
-        
-        # All retries exhausted
-        self.logger.debug(
-            f"_safe_select_with_recovery: dropdown={dropdown_id} value='{target_value}' "
-            f"all {max_retries} attempts failed. last={last_error}"
-        )
-        return False
-    
     def _pw_get_dropdown_options(self, selector_id, max_wait=10, poll_interval=0.5):
         """Helper: Get dropdown options with polling to avoid AJAX race."""
         try:
@@ -3389,71 +2816,7 @@ class SearchWorker:
             except Exception as chkpt_err:
                 self.logger.debug(f"Checkpoint lookup failed: {chkpt_err}")
 
-        # ═══════════════════════════════════════════════════════════════════════
-        # v11.0: SKELETON-BASED SURVEY FILTERING
-        # ───────────────────────────────────────────────────────────────────────
-        # If we have a Service154 skeleton for this village, the user's `max_survey`
-        # input becomes IRRELEVANT — Service154 has already told us the authoritative
-        # list of surveys that exist. We:
-        #   1. Set start_survey = max(checkpoint, skeleton_min) — respects resume.
-        #   2. Set max_survey   = skeleton_max — IGNORES user's guess (which was a
-        #      v10-era enumeration ceiling that has no meaning when we have the
-        #      exact list).
-        #   3. Iterate ONLY surveys present in the skeleton — empty/missing ones
-        #      are skipped without portal calls.
-        #
-        # If no skeleton (fetch failed or S154 unreachable), behavior is identical
-        # to v10 (1..max_survey enumeration with smart-stop). max_survey then acts
-        # as the safety ceiling for enumeration only.
-        # ═══════════════════════════════════════════════════════════════════════
-        # ═══════════════════════════════════════════════════════════════════════
-        # v11.0 LESSONS LEARNED — SKELETON IS NOT AUTHORITATIVE
-        # ───────────────────────────────────────────────────────────────────────
-        # Empirical evidence (May 21 2026): Service154's `Fn_GetMRSurveyDataVillageWise`
-        # endpoint TRUNCATES the survey list. For GANGAVARA CHOWDAPPANAHALLI, skeleton
-        # reported max survey=320, but Service2 has data at survey 350, 400, etc.
-        # Using skeleton as the upper bound silently dropped ~25% of records per village.
-        #
-        # CURRENT POLICY:
-        #   - Iterate ALL surveys 1..max_survey (user input) — like v10
-        #   - Smart-stop handles genuinely empty trailing surveys
-        #   - Skeleton is loaded but used ONLY for empty-dropdown rescue (safety net)
-        #     and informational logging — NEVER as a filter or upper bound.
-        # ═══════════════════════════════════════════════════════════════════════
-        skeleton_survey_set: Optional[Set[int]] = None
-        skeleton_active_for_rescue = False  # only enables empty-dropdown rescue
-        skeleton_hissa_map: Dict[Tuple[int, str], Set[str]] = {}
-        skeleton_surnocs_per_survey: Dict[int, Set[str]] = {}
-        
-        if Config.SKELETON_FIRST_ENABLED:
-            village_skel = self.skeletons.get(str(village_code), [])
-            if village_skel:
-                skeleton_survey_set = {int(r['survey_no']) for r in village_skel if isinstance(r.get('survey_no'), int)}
-                for r in village_skel:
-                    try:
-                        sy = int(r['survey_no'])
-                    except (TypeError, ValueError):
-                        continue
-                    sn = str(r.get('surnoc', '')).strip()
-                    hi = str(r.get('hissa', '')).strip()
-                    skeleton_hissa_map.setdefault((sy, sn), set()).add(hi)
-                    skeleton_surnocs_per_survey.setdefault(sy, set()).add(sn)
-                
-                if skeleton_survey_set:
-                    skel_min = min(skeleton_survey_set)
-                    skel_max = max(skeleton_survey_set)
-                    skeleton_active_for_rescue = True
-                    self._add_log(
-                        f"📋 {village_name}: Skeleton loaded for empty-dropdown rescue "
-                        f"({len(skeleton_survey_set)} surveys advisory; iterating 1..{max_survey} for safety)"
-                    )
-        
-        # Sync worker_status max_survey for accurate UI display
-        self._update_status(max_survey=max_survey)
-        self._add_log(
-            f"🏘️ Starting {village_name}: Surveys {start_survey} to {max_survey} "
-            f"(full enumeration; smart-stop active)"
-        )
+        self._add_log(f"🏘️ Starting {village_name}: Surveys {start_survey} to {max_survey}")
         
         # Validate survey range
         if start_survey > max_survey:
@@ -3461,8 +2824,6 @@ class SearchWorker:
             return
 
         # SEQUENTIAL SURVEY ITERATION: 1, 2, 3... NO SKIPPING
-        # v11.0 (post May 21 fix): skeleton-based skip removed — Service154 truncates
-        # survey lists. We iterate the full user range; smart-stop handles tail.
         survey_no = start_survey
         while survey_no <= max_survey:
             if not self.state.running:
@@ -3686,41 +3047,6 @@ class SearchWorker:
                 # Check if surnoc populated (Playwright)
                 surnoc_opts = self._pw_get_dropdown_options(IDS['surnoc'])
                 
-                # ═══════════════════════════════════════════════════════════════════════
-                # v11.0 100% ACCURACY — DROPDOWN-EMPTY RESCUE
-                # ───────────────────────────────────────────────────────────────────────
-                # If Service2 returned an empty surnoc dropdown but Service154 says this
-                # survey HAS data (skeleton has tuples for this survey), it's almost
-                # certainly a race/AJAX glitch — not a genuinely empty survey. Re-issue
-                # GO once and, if still empty, fall through to use skeleton's surnoc list
-                # directly. This prevents the false-skip path from claiming survey is empty.
-                # ═══════════════════════════════════════════════════════════════════════
-                if not surnoc_opts and skeleton_active_for_rescue and survey_no in (skeleton_survey_set or set()):
-                    self._add_log(
-                        f"🔬 Sy:{survey_no} dropdown empty but skeleton has data — refetching",
-                        level='WARN', kind='precision',
-                    )
-                    try:
-                        # One quick re-issue of GO to give the AJAX another chance
-                        time.sleep(2)
-                        self.page.evaluate(f'document.getElementById("{IDS["go_btn"]}").click()')
-                        self.page.wait_for_load_state('domcontentloaded')
-                        time.sleep(Config.POST_CLICK_WAIT + 2)
-                        surnoc_opts = self._pw_get_dropdown_options(IDS['surnoc'])
-                    except Exception:
-                        pass
-                    # If STILL empty, use skeleton surnocs directly. The select_option
-                    # call later may still fail if Service2 truly has no data, but at
-                    # least we'll attempt — beats silently treating as empty.
-                    if not surnoc_opts:
-                        sk_surnocs = skeleton_surnocs_per_survey.get(survey_no, set())
-                        if sk_surnocs:
-                            surnoc_opts = sorted(sk_surnocs)
-                            self._add_log(
-                                f"   ⚠️ Using skeleton surnocs as fallback: {surnoc_opts}",
-                                level='WARN', kind='precision',
-                            )
-                
                 if not surnoc_opts:
                     # This is a genuinely empty survey (not session expired)
                     empty_count += 1
@@ -3762,132 +3088,20 @@ class SearchWorker:
                 surveys_with_data += 1
                 last_survey_with_data = survey_no  # Track last successful survey
                 
-                # ═══════════════════════════════════════════════════════════════════════
-                # v11.0 LEARNING (Option B reverted, keep informational logs):
-                # ───────────────────────────────────────────────────────────────────────
-                # We previously tried UNIONing skeleton surnocs with dropdown surnocs.
-                # Empirically, skeleton-only surnocs are HISTORICAL / SUBDIVIDED entries
-                # that Service2's dropdown intentionally doesn't expose (because their
-                # data has been migrated to current sub-entries). Trying to select them
-                # fails with a 5s timeout per entry — wasted time AND false skips.
-                #
-                # Correct approach: trust Service2's dropdown for surnocs (authoritative
-                # for queryable current data). Just LOG when skeleton differs so we have
-                # visibility, but don't try to select non-existent options.
-                # ═══════════════════════════════════════════════════════════════════════
-                target_surnocs = list(surnoc_opts)
-                if skeleton_active_for_rescue:
-                    sk_surnocs_for_sy = skeleton_surnocs_per_survey.get(survey_no, set())
-                    extras = sk_surnocs_for_sy - set(surnoc_opts)
-                    if extras:
-                        # INFORMATIONAL only — these are typically historical/composite
-                        # entries (e.g., '*' summary, subdivided ancestors). Their data
-                        # is covered by the current dropdown entries.
-                        self.logger.debug(
-                            f"Sy:{survey_no} skeleton has {len(extras)} surnoc(s) not in dropdown "
-                            f"(likely historical/composite, ignoring): {sorted(extras)}"
-                        )
-                
                 # Process each surnoc
-                for surnoc in target_surnocs:
+                for surnoc in surnoc_opts:
                     if not self.state.running:
                         return
                     
                     try:
-                        # ═══════════════════════════════════════════════════════════════
-                        # v11.0 ROBUST SURNOC SELECTION + STALE-STATE DETECTION
-                        # ───────────────────────────────────────────────────────────────
-                        # 1. Try select with recovery (verify + 3 retries with GO refresh)
-                        # 2. If still fails, RE-READ dropdown to distinguish:
-                        #    - Empty dropdown = stale state from previous survey;
-                        #      survey is genuinely empty → continue, NOT a skip
-                        #    - Non-empty dropdown = real selection failure → skip + Phase 2
-                        # ═══════════════════════════════════════════════════════════════
-                        if not self._safe_select_with_recovery(
-                            IDS['surnoc'], surnoc,
-                            survey_no=survey_no,
-                            max_retries=3,
-                        ):
-                            # Distinguish stale-state false-positive from real failure
-                            try:
-                                current_opts = self._pw_get_dropdown_options(
-                                    IDS['surnoc'], max_wait=2, poll_interval=0.3
-                                )
-                            except Exception:
-                                current_opts = []
-                            
-                            if not current_opts:
-                                # Dropdown is now empty — survey doesn't actually have data,
-                                # the original surnoc list was stale state from prior survey.
-                                # Treat as genuinely empty survey, NOT a skip.
-                                self.logger.debug(
-                                    f"Sy:{survey_no} surnoc='{surnoc}' selection failed but "
-                                    f"dropdown is empty → stale state, treating as empty survey"
-                                )
-                                # Don't increment empty_count further (already handled by
-                                # outer empty-survey path) — just skip this surnoc loop iter.
-                                continue
-                            
-                            # Genuine selection failure — dropdown still has options
-                            self._add_log(
-                                f"⚠️ Surnoc '{surnoc}' could not be selected for Sy:{survey_no} "
-                                f"after recovery — added to Phase 2 retry queue",
-                                level='WARN', kind='select_recovery',
-                            )
-                            self.errors += 1
-                            skip_record = {
-                                'village': village_name,
-                                'village_code': village_code,
-                                'survey_no': survey_no,
-                                'surnoc': surnoc,
-                                'hissa': '*',
-                                'period': '',
-                                'reason': f'Surnoc selection failed after recovery retries',
-                                'timestamp': datetime.now().isoformat()
-                            }
-                            skipped_in_village.append(skip_record)
-                            with self.state_lock:
-                                self.state.skipped_surveys.append(skip_record)
-                            if self.db and self.session_id:
-                                try:
-                                    self.db.save_skipped_item(
-                                        session_id=self.session_id,
-                                        village_name=village_name,
-                                        survey_no=survey_no,
-                                        surnoc=surnoc,
-                                        hissa='*',
-                                        period='',
-                                        error='Surnoc selection failed after recovery'
-                                    )
-                                except Exception:
-                                    pass
-                            continue
-                        
+                        self._pw_select_text(IDS['surnoc'], surnoc)
                         time.sleep(Config.POST_SELECT_WAIT + 1)
                         
-                        # Get hissa options (Playwright) — Service2's dropdown is authoritative
-                        # for which hissas are CURRENTLY selectable. Skeleton has historical
-                        # entries too (subdivided/composite) that fail with timeout if we try
-                        # them. So we trust the dropdown here.
+                        # Get hissa options (Playwright)
                         hissa_opts = self._pw_get_dropdown_options(IDS['hissa'])
-                        target_hissas = list(hissa_opts)
-                        
-                        if skeleton_active_for_rescue:
-                            sk_hissas = skeleton_hissa_map.get((survey_no, surnoc), set())
-                            extras_hi = sk_hissas - set(hissa_opts)
-                            if extras_hi:
-                                # INFORMATIONAL only — log but don't attempt. These are
-                                # historical entries (e.g., '*' summary, '-p1' partitions,
-                                # 'P1' provisional, '2A'/'2B' subdivided) whose CURRENT
-                                # data is covered by the dropdown's entries.
-                                self.logger.debug(
-                                    f"Sy:{survey_no} Sn:{surnoc} skeleton has {len(extras_hi)} "
-                                    f"hissa(s) not in dropdown (likely historical, ignoring): "
-                                    f"{sorted(extras_hi)}"
-                                )
                         
                         # Process each hissa
-                        for hissa in target_hissas:
+                        for hissa in hissa_opts:
                             if not self.state.running:
                                 return
                             
@@ -3896,17 +3110,7 @@ class SearchWorker:
                             
                             while hissa_retry_count <= max_hissa_retries:
                                 try:
-                                    # v11.0: use recovery helper for hissa too — same race
-                                    # conditions affect this dropdown under high concurrency.
-                                    if not self._safe_select_with_recovery(
-                                        IDS['hissa'], hissa,
-                                        survey_no=survey_no,
-                                        max_retries=3,
-                                    ):
-                                        # Genuine hissa selection failure — raise so the
-                                        # outer hissa_retry loop can do its own recovery
-                                        # (re-select surnoc + retry hissa once)
-                                        raise Exception(f"Hissa '{hissa}' selection failed after recovery")
+                                    self._pw_select_text(IDS['hissa'], hissa)
                                     
                                     # Wait for period dropdown to enable after selecting hissa
                                     time.sleep(Config.POST_SELECT_WAIT + 2)
@@ -5285,10 +4489,6 @@ class ParallelSearchCoordinator:
         self.state_manager: Optional[StateManager] = None
         self.portal_state_monitor_thread: Optional[threading.Thread] = None
         self._stop_portal_monitor = threading.Event()
-        
-        # v11.0: Service154 skeleton store ({village_code: [{survey_no, surnoc, ...}]})
-        # Always initialized so workers can safely read it before any prefetch.
-        self.skeletons: Dict[str, List[Dict]] = {}
     
     def _prepare_villages(self, params: dict) -> List[Tuple[str, str, str, str]]:
         """
@@ -5437,117 +4637,6 @@ class ParallelSearchCoordinator:
         for i, village in enumerate(villages):
             chunks[i % num_workers].append(village)
         return chunks
-    
-    def _log_event(self, message: str, level: str = 'INFO', kind: Optional[str] = None,
-                   village: Optional[str] = None) -> None:
-        """
-        v11.0: Coordinator-level structured logging. Both updates the in-memory
-        list (UI status snapshot) AND persists to DB (UI incremental fetch).
-        Use this for new v11 code paths; existing 80+ direct .logs.append() calls
-        continue to work but aren't DB-persisted (they're transient anyway).
-        """
-        with self.state_lock:
-            self.state.logs.append(message)
-            if len(self.state.logs) > Config.LOG_RETENTION_COUNT:
-                self.state.logs = self.state.logs[-Config.LOG_RETENTION_COUNT:]
-        if self.current_session_id and self.db:
-            try:
-                self.db.save_event_log(
-                    session_id=self.current_session_id,
-                    message=message,
-                    level=level,
-                    worker_id=None,
-                    village=village,
-                    kind=kind,
-                )
-            except Exception:
-                pass
-    
-    def _prefetch_skeletons(
-        self,
-        villages: List[Tuple[str, str, str, str]],
-        params: dict,
-    ) -> None:
-        """
-        v11.0: Pre-fetch the (Survey, Surnoc, Hissa) skeleton from Service154 for
-        each village in `villages`. Populates `self.skeletons` keyed by village_code.
-        
-        This is fire-and-forget for individual failures — a village whose skeleton
-        fails will simply be searched via v10 enumeration logic (graceful fallback).
-        Total time bounded by the slowest of N parallel HTTP calls (~5-30s typical).
-        """
-        client = get_service154_client()
-        district_code = str(params.get('district_code', ''))
-        taluk_code = str(params.get('taluk_code', ''))
-        
-        # Quick reachability check — if S154 is down, skip without retry storms
-        try:
-            if not client.is_reachable():
-                self._log_event("⚠️ Service154 unreachable — skeleton pre-fetch skipped, using v10 enumeration",
-                                level='WARN', kind='skeleton')
-                return
-        except Exception as e:
-            self._log_event(f"⚠️ Service154 reachability check failed: {str(e)[:60]} — using v10 enumeration",
-                            level='WARN', kind='skeleton')
-            return
-        
-        self._log_event(f"🔎 Service154 reachable — fetching survey skeletons for {len(villages)} villages...",
-                        level='PHASE', kind='skeleton')
-        
-        completed = [0]   # boxed counter for thread closure
-        failures = [0]
-        total_tuples = [0]
-        completed_lock = threading.Lock()
-        
-        def _fetch_one(vt: Tuple[str, str, str, str]) -> None:
-            village_code, village_name, hobli_code, _hobli_name = vt
-            try:
-                tuples = client.fetch_village_skeleton(
-                    district_code=district_code,
-                    taluk_code=taluk_code,
-                    hobli_code=str(hobli_code),
-                    village_code=str(village_code),
-                )
-            except Exception as e:
-                logger.debug(f"Skeleton fetch failed for {village_name}: {e}")
-                tuples = []
-            
-            with completed_lock:
-                completed[0] += 1
-                if not tuples:
-                    failures[0] += 1
-                else:
-                    total_tuples[0] += len(tuples)
-                done_n = completed[0]
-            
-            # Always store — empty list signals "fall back to enumeration"
-            self.skeletons[str(village_code)] = tuples
-            
-            # Progress log every 20 villages or on completion
-            if done_n % 20 == 0 or done_n == len(villages):
-                self._log_event(
-                    f"   📋 Skeleton: {done_n}/{len(villages)} villages "
-                    f"({total_tuples[0]} tuples, {failures[0]} fallback)",
-                    level='INFO', kind='skeleton',
-                )
-        
-        # Bounded parallelism — Service154 is unmetered but be polite
-        with ThreadPoolExecutor(max_workers=Config.SKELETON_PARALLEL_WORKERS) as ex:
-            list(ex.map(_fetch_one, villages))
-        
-        # Final summary
-        ok_count = len(villages) - failures[0]
-        self._log_event(
-            f"✅ Skeleton pre-fetch complete: "
-            f"{ok_count}/{len(villages)} villages, "
-            f"{total_tuples[0]} valid (Sy, Sn, Hi) tuples discovered",
-            level='PHASE', kind='skeleton',
-        )
-        if failures[0]:
-            self._log_event(
-                f"   ⚠️ {failures[0]} villages will use enumeration fallback",
-                level='WARN', kind='skeleton',
-            )
     
     def _get_downloads_folder(self) -> str:
         """Get user's Downloads folder path"""
@@ -5706,27 +4795,6 @@ class ParallelSearchCoordinator:
             self.db.register_villages(self.current_session_id, villages)
             self.db.update_session_status(self.current_session_id, 'running', total_villages=len(villages))
             
-            # ═══════════════════════════════════════════════════════════════════════
-            # v11.0: SKELETON PRE-FETCH (Service154 enumeration of valid surveys)
-            # ───────────────────────────────────────────────────────────────────────
-            # Before workers start, fetch the authoritative (Survey, Surnoc, Hissa)
-            # list for each village from Service154's HTTP API. Workers will then
-            # process these exact tuples instead of guessing 1..max_survey.
-            # 
-            # This is parallel (8 threads) and bounded — typical case completes in
-            # <30s for 100 villages. If any individual village fetch fails, that
-            # village simply falls back to v10 enumeration behavior (no failure).
-            # ═══════════════════════════════════════════════════════════════════════
-            # Reset skeletons for this run (also reset by /api/search/start, belt+braces)
-            self.skeletons = {}
-            if Config.SKELETON_FIRST_ENABLED:
-                self._prefetch_skeletons(villages, params)
-            else:
-                self._log_event(
-                    "⚙️ Skeleton-first mode disabled — using v10 enumeration",
-                    level='WARN', kind='skeleton',
-                )
-            
             # Determine number of workers
             num_workers = min(Config.MAX_WORKERS, len(villages))
             self.state.total_workers = num_workers
@@ -5757,8 +4825,7 @@ class ParallelSearchCoordinator:
                     matches_writer=self.matches_writer,
                     state_lock=self.state_lock,
                     db=self.db,  # Persistent database
-                    session_id=self.current_session_id,  # Current session ID
-                    skeletons=getattr(self, 'skeletons', None),  # v11: pre-fetched (sy,sn,hi)
+                    session_id=self.current_session_id  # Current session ID
                 )
                 self.workers.append(worker)
                 self.executor.submit(worker.run)
@@ -6152,8 +5219,7 @@ class ParallelSearchCoordinator:
             matches_writer=self.matches_writer,
             state_lock=self.state_lock,
             db=self.db,
-            session_id=self.current_session_id,
-            skeletons=getattr(self, 'skeletons', None),  # v11
+            session_id=self.current_session_id
         )
         
         with self.state_lock:
@@ -6216,58 +5282,14 @@ class ParallelSearchCoordinator:
         
         threading.Thread(target=update_db_async, daemon=True).start()
         
-        # ═══════════════════════════════════════════════════════════════════════
-        # v11.1: AUTO-EXPORT ALL CSVs ON STOP (not just skipped surveys)
-        # ───────────────────────────────────────────────────────────────────────
-        # Earlier behavior only exported skipped_surveys.csv; users had no
-        # all_records.csv / matches.csv after a manual stop. Now we:
-        #  1. Flush in-memory CSV writers (writes pending buffer to disk)
-        #  2. Export from DB to a dated snapshot in Downloads (independent of
-        #     writer state — works even if writer was never opened)
-        #  3. Export skipped surveys (existing behavior, retained)
-        # All operations are best-effort — failures don't break the stop flow.
-        # ═══════════════════════════════════════════════════════════════════════
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        downloads = os.path.join(os.path.expanduser('~'), 'Downloads')
-        os.makedirs(downloads, exist_ok=True)
-        sid = self.current_session_id
-        
-        # 1. Flush live CSV writers to disk
-        try:
-            if self.all_records_writer:
-                self.all_records_writer.flush()
-            if self.matches_writer:
-                self.matches_writer.flush()
-        except Exception as e:
-            logger.warning(f"CSV writer flush on stop: {e}")
-        
-        # 2. Export DB-snapshot CSVs (always succeeds if session has rows)
-        if sid:
-            try:
-                all_path = os.path.join(downloads, f'bhoomi_all_records_{timestamp}_stop.csv')
-                exported_all = self.db.export_to_csv(sid, all_path, matches_only=False)
-                if exported_all:
-                    with self.state_lock:
-                        self.state.logs.append(f"📥 All records exported on stop: {os.path.basename(all_path)}")
-                    logger.info(f"Auto-exported all records on stop: {all_path}")
-            except Exception as e:
-                logger.error(f"Failed to auto-export all records on stop: {e}")
-            
-            try:
-                matches_path = os.path.join(downloads, f'bhoomi_matches_{timestamp}_stop.csv')
-                exported_matches = self.db.export_to_csv(sid, matches_path, matches_only=True)
-                if exported_matches:
-                    with self.state_lock:
-                        self.state.logs.append(f"📥 Matches exported on stop: {os.path.basename(matches_path)}")
-                    logger.info(f"Auto-exported matches on stop: {matches_path}")
-            except Exception as e:
-                logger.error(f"Failed to auto-export matches on stop: {e}")
-        
-        # 3. Skipped surveys (existing behavior)
+        # Auto-export skipped surveys on stop as well
         if self.state.skipped_surveys:
             try:
-                filename = f"bhoomi_skipped_surveys_{timestamp}_stop.csv"
+                downloads = os.path.join(os.path.expanduser('~'), 'Downloads')
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = f"skipped_surveys_{timestamp}.csv"
                 filepath = os.path.join(downloads, filename)
+
                 fieldnames = ['village', 'village_code', 'survey_no', 'surnoc', 'hissa', 'period', 'reason', 'timestamp']
                 with open(filepath, 'w', newline='', encoding='utf-8') as f:
                     writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
@@ -6380,12 +5402,10 @@ class ParallelSearchCoordinator:
                     'progress': int((self.state.villages_completed / max(self.state.total_villages, 1)) * 100) if self.state.total_villages else 0,
                     'all_records_file': self.state.all_records_file or '',
                     'matches_file': self.state.matches_file or '',
-                    # v11.0: bumped retention from 30 to 500 — survives browser refresh
-                    'logs': list(self.state.logs[-Config.LOG_RETENTION_COUNT:]) if self.state.logs else [],
+                    'logs': list(self.state.logs[-30:]) if self.state.logs else [],  # Last 30 logs
                     # Real-time records for UI (last 100)
-                    # v11.0: bumped buffers — UI shows more on reconnect
-                    'all_records': list(self.state.all_records[-Config.RECORDS_BUFFER_COUNT:]) if self.state.all_records else [],
-                    'matches': list(self.state.matches[-Config.MATCHES_BUFFER_COUNT:]) if self.state.matches else [],
+                    'all_records': list(self.state.all_records[-100:]) if self.state.all_records else [],
+                    'matches': list(self.state.matches[-50:]) if self.state.matches else [],  # Last 50 matches only
                     # BULLETPROOF VILLAGE TRACKING
                     'village_tracking': {
                         'total_to_search': len(self.state.villages_all) if self.state.villages_all else 0,
@@ -6481,20 +5501,7 @@ CORS(app)
 
 # Global instances
 api = BhoomiAPI()
-
-# v11.0: SINGLETON coordinator. Created ONCE per process, reused across all
-# searches. This means:
-#   - Server stays warm between searches (no DB-pool re-init, no S154 client re-init)
-#   - State of the LAST search is queryable until a new one starts
-#   - On server restart, mark stale 'running' DB sessions as 'interrupted' so
-#     the UI doesn't lie about live work
 coordinator = ParallelSearchCoordinator()
-try:
-    _interrupted_count = coordinator.db.mark_interrupted_sessions()
-    if _interrupted_count > 0:
-        logger.info(f"⚙️ v11.0 startup: marked {_interrupted_count} stale 'running' sessions as 'interrupted'")
-except Exception as _e:
-    logger.warning(f"v11.0 startup housekeeping failed: {_e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # HTML TEMPLATE (Enhanced with parallel worker visualization)
@@ -7255,7 +6262,7 @@ HTML_TEMPLATE = '''
                     <p>Parallel Search Engine</p>
                 </div>
             </div>
-            <div class="version-badge">v11.0 SKELETON-FIRST • Service154 Pre-Fetch • 24 Workers • Phase 2 Auto-Retry</div>
+            <div class="version-badge">v10.0 PRODUCTION • 24 Workers • No-Owner Refetch • Phase 2 Auto-Retry</div>
         </div>
     </header>
     
@@ -7297,11 +6304,8 @@ HTML_TEMPLATE = '''
             </div>
             
             <div class="form-group">
-                <label class="form-label">Max Survey Number <span style="font-size:0.7rem; color:var(--text-muted); font-weight:normal;">(fallback only — overridden by Service154 when reachable)</span></label>
-                <input type="number" id="maxSurvey" class="form-input" value="800" min="1" max="2000">
-                <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.3rem; line-height: 1.4;">
-                    With Service154 skeleton mode (default), this number is <strong>ignored</strong>. The exact list of valid surveys per village is fetched up-front. This value is used only when Service154 is unreachable for a specific village (rare).
-                </div>
+                <label class="form-label">Max Survey Number</label>
+                <input type="number" id="maxSurvey" class="form-input" value="200" min="1" max="1000">
             </div>
             
             <button id="searchBtn" class="btn btn-primary">
@@ -7740,201 +6744,10 @@ HTML_TEMPLATE = '''
         const ownerInput = document.getElementById('ownerName');
         const maxSurveyInput = document.getElementById('maxSurvey');
         
-        // ═══════════════════════════════════════════════════════════════════
-        // v11.0: SESSION STATE REPLAY
-        // ───────────────────────────────────────────────────────────────────
-        // Track last-seen log id so we can fetch only NEW logs on each poll.
-        // Track active session id so refreshing the browser restores context.
-        // ═══════════════════════════════════════════════════════════════════
-        let v11LastLogId = 0;
-        let v11ActiveSessionId = null;
-        let v11RecordOffset = 0;
-        let v11RecordTotal = 0;
-        let v11MatchOffset = 0;
-        let v11MatchTotal = 0;
-        
-        async function v11RestoreSessionState() {
-            // Called once on page load. If there's an active or recent session
-            // in the database, populate the UI with its full backlog so the
-            // user sees the same state they saw before refreshing.
-            try {
-                const res = await fetch('/api/session/current');
-                if (!res.ok) return;
-                const info = await res.json();
-                
-                if (!info.has_session || !info.session_id) {
-                    return;  // no session yet — fresh UI is correct
-                }
-                
-                v11ActiveSessionId = info.session_id;
-                console.log('[v11] Restoring session:', v11ActiveSessionId,
-                            'logs=', info.log_count, 'records=', info.record_count,
-                            'matches=', info.match_count, 'active=', info.is_active);
-                
-                // Update top-line metrics from session metadata
-                const totalRecords = document.getElementById('totalRecords');
-                const totalMatches = document.getElementById('totalMatches');
-                const recordsBadge = document.getElementById('recordsBadge');
-                const matchesBadge = document.getElementById('matchesBadge');
-                if (totalRecords) totalRecords.textContent = info.record_count || 0;
-                if (totalMatches) totalMatches.textContent = info.match_count || 0;
-                if (recordsBadge) recordsBadge.textContent = info.record_count || 0;
-                if (matchesBadge) matchesBadge.textContent = info.match_count || 0;
-                
-                // Load all logs (paginated)
-                await v11LoadAllLogs(v11ActiveSessionId);
-                
-                // Load first page of records + matches
-                await v11LoadRecordsPage(v11ActiveSessionId, 0, false);
-                await v11LoadRecordsPage(v11ActiveSessionId, 0, true);
-                
-                // Show a detailed banner when the prior session was interrupted
-                if (info.session && info.session.status === 'interrupted') {
-                    const sid = info.session_id || 'unknown';
-                    const recs = (info.record_count || 0).toLocaleString();
-                    const matches = (info.match_count || 0).toLocaleString();
-                    const owner = (info.session.owner_name || '').trim();
-                    const ownerStr = owner ? ` for owner '${owner}'` : '';
-                    
-                    addLog(`⚠️ Found previous session '${sid}' (interrupted on server restart):`);
-                    addLog(`   ${recs} records and ${matches} matches preserved in database${ownerStr}.`);
-                    addLog(`   Click 'Start Search' to begin fresh, or use Records/Matches tabs to inspect.`);
-                }
-                // Inform user when a session is currently active (running or completed)
-                else if (info.session && info.session.status === 'running' && info.is_active) {
-                    addLog(`▶️ Active session in progress: '${info.session_id}'. Live updates streaming...`);
-                }
-                else if (info.session && info.session.status === 'completed') {
-                    const recs = (info.record_count || 0).toLocaleString();
-                    const matches = (info.match_count || 0).toLocaleString();
-                    addLog(`✅ Last session '${info.session_id}' completed: ${recs} records, ${matches} matches.`);
-                }
-                else if (info.session && info.session.status === 'stopped') {
-                    addLog(`⏹️ Last session '${info.session_id}' was stopped manually.`);
-                }
-            } catch (e) {
-                console.warn('[v11] Session restore failed:', e);
-            }
-        }
-        
-        async function v11LoadAllLogs(sessionId) {
-            // Walks the DB in 500-row pages until exhausted, keeps v11LastLogId in sync
-            const container = document.getElementById('logsContainer');
-            if (!container) return;
-            
-            container.innerHTML = '';
-            let since = 0;
-            let totalLoaded = 0;
-            const MAX_BACKFILL = 5000;  // soft cap so a 50,000-log session doesn't crush the browser
-            
-            while (totalLoaded < MAX_BACKFILL) {
-                const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}/logs?since_id=${since}&limit=500`);
-                if (!r.ok) break;
-                const data = await r.json();
-                if (!data.logs || data.logs.length === 0) break;
-                
-                // Render in chronological order at top (newest at top in our UI)
-                const fragment = document.createDocumentFragment();
-                data.logs.forEach(row => {
-                    const div = document.createElement('div');
-                    div.className = `log-entry log-${(row.level || 'INFO').toLowerCase()}`;
-                    div.dataset.logId = row.id;
-                    div.textContent = row.message;
-                    fragment.appendChild(div);
-                });
-                // Newest-on-top means we PREPEND
-                if (container.firstChild) {
-                    container.insertBefore(fragment, container.firstChild);
-                } else {
-                    container.appendChild(fragment);
-                }
-                
-                since = data.next_since_id;
-                totalLoaded += data.logs.length;
-                v11LastLogId = Math.max(v11LastLogId, since);
-                
-                if (!data.has_more) break;
-            }
-            
-            console.log(`[v11] Restored ${totalLoaded} logs from DB`);
-        }
-        
-        async function v11FetchIncrementalLogs() {
-            // Called every poll. Fetches only NEW log rows since v11LastLogId.
-            if (!v11ActiveSessionId) return;
-            try {
-                const r = await fetch(`/api/session/${encodeURIComponent(v11ActiveSessionId)}/logs?since_id=${v11LastLogId}&limit=500`);
-                if (!r.ok) return;
-                const data = await r.json();
-                if (!data.logs || data.logs.length === 0) return;
-                
-                const container = document.getElementById('logsContainer');
-                if (!container) return;
-                
-                const fragment = document.createDocumentFragment();
-                data.logs.forEach(row => {
-                    const div = document.createElement('div');
-                    div.className = `log-entry log-${(row.level || 'INFO').toLowerCase()}`;
-                    div.dataset.logId = row.id;
-                    div.textContent = row.message;
-                    fragment.appendChild(div);
-                });
-                
-                // Newest at top
-                if (container.firstChild) {
-                    container.insertBefore(fragment, container.firstChild);
-                } else {
-                    container.appendChild(fragment);
-                }
-                
-                v11LastLogId = Math.max(v11LastLogId, data.next_since_id);
-                
-                // Cap DOM size to prevent memory blowup over long runs
-                while (container.children.length > 5000) {
-                    container.removeChild(container.lastChild);
-                }
-            } catch (e) {
-                console.warn('[v11] Incremental log fetch failed:', e);
-            }
-        }
-        
-        async function v11LoadRecordsPage(sessionId, offset, matchesOnly) {
-            try {
-                const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}/records?offset=${offset}&limit=200&matches_only=${matchesOnly}`);
-                if (!r.ok) return;
-                const data = await r.json();
-                
-                if (matchesOnly) {
-                    if (offset === 0 && typeof updateMatchesTable === 'function') {
-                        updateMatchesTable(data.records);
-                    }
-                    v11MatchTotal = data.total;
-                    v11MatchOffset = offset + (data.records || []).length;
-                } else {
-                    if (offset === 0 && typeof updateRecordsTable === 'function') {
-                        updateRecordsTable(data.records);
-                    }
-                    v11RecordTotal = data.total;
-                    v11RecordOffset = offset + (data.records || []).length;
-                }
-                
-                // Show pagination info on the badge
-                const recordsBadge = document.getElementById('recordsBadge');
-                const matchesBadge = document.getElementById('matchesBadge');
-                if (matchesOnly && matchesBadge) matchesBadge.textContent = data.total || 0;
-                if (!matchesOnly && recordsBadge) recordsBadge.textContent = data.total || 0;
-            } catch (e) {
-                console.warn('[v11] Record page load failed:', e);
-            }
-        }
-        
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             loadDistricts();
             setupEventListeners();
-            // v11.0: Restore previous session state if any.
-            // Runs in background — doesn't block the form.
-            v11RestoreSessionState();
         });
         
         function setupEventListeners() {
@@ -8164,17 +6977,17 @@ HTML_TEMPLATE = '''
             const talukCode = talukSelect.value;
             const hobliCode = hobliSelect.value || 'all';
             const villageCode = villageSelect.value || 'all';
-            const maxSurvey = parseInt(maxSurveyInput.value) || 800;
+            const maxSurvey = parseInt(maxSurveyInput.value) || 200;
             
             if (!districtCode || !talukCode) {
                 alert('Please select District and Taluk');
                 return;
             }
             
-            // Validate max survey number (fallback bound only — skeleton overrides)
-            if (maxSurvey <= 0 || maxSurvey > 2000) {
-                alert('Max Survey must be between 1 and 2000. Using default: 800');
-                maxSurveyInput.value = '800';
+            // Validate max survey number
+            if (maxSurvey <= 0 || maxSurvey > 1000) {
+                alert('Max Survey must be between 1 and 1000. Using default: 200');
+                maxSurveyInput.value = '200';
                 return;
             }
             
@@ -8442,44 +7255,28 @@ HTML_TEMPLATE = '''
                     const medConfCount = document.getElementById('medConfCount');
                     const lowConfCount = document.getElementById('lowConfCount');
                     
-                    // v11.0: Calculate average confidence if we have village stats.
-                    // Confidence is a per-village metric (calculated when village
-                    // completes), so it stays empty until the first village finishes.
-                    const completedVillages = (am.villages_high_confidence || 0) + (am.villages_medium_confidence || 0) + (am.villages_low_confidence || 0);
-                    
-                    if (completedVillages > 0) {
-                        // Weighted average: High=90%, Med=65%, Low=30%
-                        const avgConf = Math.round(
-                            ((am.villages_high_confidence || 0) * 90 + 
-                             (am.villages_medium_confidence || 0) * 65 + 
-                             (am.villages_low_confidence || 0) * 30) / completedVillages
-                        );
-                        if (confidencePercent) confidencePercent.textContent = avgConf + '%';
-                        if (confidenceFill) {
-                            confidenceFill.style.width = avgConf + '%';
-                            confidenceFill.style.opacity = '1';
-                            if (avgConf >= 80) {
-                                confidenceFill.style.background = 'linear-gradient(90deg, #10b981, #059669)';
-                            } else if (avgConf >= 50) {
-                                confidenceFill.style.background = 'linear-gradient(90deg, #f59e0b, #d97706)';
-                            } else {
-                                confidenceFill.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+                    // Calculate average confidence if we have village stats
+                    if (am.villages_high_confidence || am.villages_medium_confidence || am.villages_low_confidence) {
+                        const total = (am.villages_high_confidence || 0) + (am.villages_medium_confidence || 0) + (am.villages_low_confidence || 0);
+                        if (total > 0) {
+                            // Weighted average: High=90%, Med=65%, Low=30%
+                            const avgConf = Math.round(
+                                ((am.villages_high_confidence || 0) * 90 + 
+                                 (am.villages_medium_confidence || 0) * 65 + 
+                                 (am.villages_low_confidence || 0) * 30) / total
+                            );
+                            if (confidencePercent) confidencePercent.textContent = avgConf + '%';
+                            if (confidenceFill) {
+                                confidenceFill.style.width = avgConf + '%';
+                                // Color based on confidence
+                                if (avgConf >= 80) {
+                                    confidenceFill.style.background = 'linear-gradient(90deg, #10b981, #059669)';
+                                } else if (avgConf >= 50) {
+                                    confidenceFill.style.background = 'linear-gradient(90deg, #f59e0b, #d97706)';
+                                } else {
+                                    confidenceFill.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+                                }
                             }
-                        }
-                    } else if (status.running) {
-                        // Search active but no village completed yet — show calculating state
-                        if (confidencePercent) confidencePercent.textContent = 'calculating…';
-                        if (confidenceFill) {
-                            confidenceFill.style.width = '100%';
-                            confidenceFill.style.opacity = '0.3';
-                            confidenceFill.style.background = 'linear-gradient(90deg, #6366f1, #818cf8)';
-                        }
-                    } else {
-                        // Idle / no session yet
-                        if (confidencePercent) confidencePercent.textContent = '--';
-                        if (confidenceFill) {
-                            confidenceFill.style.width = '0%';
-                            confidenceFill.style.opacity = '1';
                         }
                     }
                     
@@ -8569,26 +7366,8 @@ HTML_TEMPLATE = '''
                     updateMatchesTable(status.matches);
                 }
                 
-                // ═══════════════════════════════════════════════════════════════
-                // v11.0: LOG RENDERING
-                // ─────────────────────────────────────────────────────────────
-                // If we have a session id (active or restored), do INCREMENTAL
-                // log fetch from DB (only new rows since last poll). Otherwise
-                // fall back to the v10 in-memory snapshot.
-                // ═══════════════════════════════════════════════════════════════
-                if (status.database && status.database.session_id) {
-                    if (v11ActiveSessionId !== status.database.session_id) {
-                        // New session detected — reset trackers
-                        v11ActiveSessionId = status.database.session_id;
-                        v11LastLogId = 0;
-                        v11RecordOffset = 0;
-                        v11MatchOffset = 0;
-                        const c = document.getElementById('logsContainer');
-                        if (c) c.innerHTML = '';
-                    }
-                    v11FetchIncrementalLogs();
-                } else if (status.logs && Array.isArray(status.logs)) {
-                    // Fallback: pre-DB session, use snapshot
+                // Update logs
+                if (status.logs && Array.isArray(status.logs)) {
                     const container = document.getElementById('logsContainer');
                     if (container) {
                         container.innerHTML = status.logs.map(log => 
@@ -8879,144 +7658,18 @@ def get_villages(district_code, taluk_code, hobli_code):
 
 @app.route('/api/search/start', methods=['POST'])
 def start_search():
-    """
-    v11.0: Reuses the singleton coordinator. If a search is already running,
-    returns 409 instead of silently overwriting. The coordinator's start_search
-    creates a fresh SearchState internally — no stale data leaks.
-    """
+    global coordinator
     data = request.json
-    if coordinator.state.running:
-        return jsonify({
-            'status': 'failed',
-            'error': 'A search is already running. Stop it first or wait for completion.'
-        }), 409
-    
-    # Reset transient lists (skeletons, workers) before new search
-    coordinator.workers = []
-    coordinator.skeletons = {}
-    
+
+    # Create new coordinator for each search
+    coordinator = ParallelSearchCoordinator()
     success = coordinator.start_search(data)
+
     return jsonify({'status': 'started' if success else 'failed'})
 
 @app.route('/api/search/status')
 def search_status():
     return jsonify(coordinator.get_state())
-
-
-# ═══════════════════════════════════════════════════════════════════════════════════
-# v11.0: SESSION INSPECTION ENDPOINTS — solves "close browser, lose state"
-# ───────────────────────────────────────────────────────────────────────────────────
-# /api/session/current        - current/last session metadata + total log/record counts
-# /api/session/<id>/logs      - paginated logs from DB (incremental via since_id)
-# /api/session/<id>/records   - paginated records from DB (offset+limit)
-# ═══════════════════════════════════════════════════════════════════════════════════
-
-@app.route('/api/session/current')
-def get_current_session():
-    """
-    Returns metadata for the active or most-recent session. The UI calls this on
-    page load to know which session to populate the view with.
-    """
-    sid = coordinator.current_session_id
-    if not sid:
-        # No active session — fall back to most recent in DB
-        try:
-            recent = coordinator.db.get_recent_sessions(limit=1)
-            sid = recent[0]['session_id'] if recent else None
-        except Exception:
-            sid = None
-    
-    if not sid:
-        return jsonify({'session_id': None, 'has_session': False})
-    
-    try:
-        session = coordinator.db.get_session(sid)
-        log_count = coordinator.db.count_logs(sid)
-        # Quick record count via the same DB
-        with coordinator.db.get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute('SELECT COUNT(*) FROM land_records WHERE session_id = ?', (sid,))
-            rec_count = cur.fetchone()[0]
-            cur.execute('SELECT COUNT(*) FROM land_records WHERE session_id = ? AND is_match = 1', (sid,))
-            match_count = cur.fetchone()[0]
-        return jsonify({
-            'session_id': sid,
-            'has_session': True,
-            'session': session,
-            'log_count': log_count,
-            'record_count': rec_count,
-            'match_count': match_count,
-            'is_active': sid == coordinator.current_session_id and coordinator.state.running,
-        })
-    except Exception as e:
-        return jsonify({'session_id': sid, 'has_session': True, 'error': str(e)[:120]})
-
-
-@app.route('/api/session/<session_id>/logs')
-def get_session_logs(session_id):
-    """
-    Incremental log fetch. UI calls this with `since_id=<last_seen_log_id>` to
-    get only NEW log rows since the last poll. Returns at most `limit` rows.
-    Optional `level` filter (INFO/WARN/ERROR/MATCH/PHASE).
-    
-    Response format:
-        {logs: [{id, ts, level, worker_id, village, kind, message}, ...],
-         next_since_id: <highest id in this batch, for next poll>,
-         has_more: bool}
-    """
-    try:
-        since_id = int(request.args.get('since_id', 0))
-        limit = min(int(request.args.get('limit', 500)), 2000)
-    except (TypeError, ValueError):
-        return jsonify({'error': 'invalid since_id or limit'}), 400
-    
-    level = request.args.get('level') or None
-    
-    rows = coordinator.db.get_logs_after(session_id, since_id=since_id, limit=limit, level_filter=level)
-    next_since = rows[-1]['id'] if rows else since_id
-    has_more = len(rows) >= limit
-    
-    return jsonify({
-        'logs': rows,
-        'next_since_id': next_since,
-        'count': len(rows),
-        'has_more': has_more,
-    })
-
-
-@app.route('/api/session/<session_id>/records')
-def get_session_records_paginated(session_id):
-    """
-    Paginated records from DB. UI uses this to load any chunk of a session's
-    records without going through the in-memory snapshot (which is capped at
-    Config.RECORDS_BUFFER_COUNT).
-    
-    Query params:
-        offset       - default 0
-        limit        - default 200, max 1000
-        matches_only - 'true' to filter is_match=1
-    
-    Response: {records: [...], total: <session total>, offset, limit, matches_only}
-    """
-    try:
-        offset = max(0, int(request.args.get('offset', 0)))
-        limit = min(int(request.args.get('limit', 200)), 1000)
-    except (TypeError, ValueError):
-        return jsonify({'error': 'invalid offset or limit'}), 400
-    
-    matches_only = request.args.get('matches_only', 'false').lower() == 'true'
-    
-    records, total = coordinator.db.get_records_paginated(
-        session_id, offset=offset, limit=limit, matches_only=matches_only
-    )
-    return jsonify({
-        'records': records,
-        'total': total,
-        'offset': offset,
-        'limit': limit,
-        'matches_only': matches_only,
-        'has_more': (offset + len(records)) < total,
-    })
 
 @app.route('/api/search/stop', methods=['POST'])
 def stop_search():
@@ -9343,34 +7996,22 @@ def export_current_skipped_csv():
 if __name__ == '__main__':
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║       POWER-BHOOMI v11.0 - SKELETON-FIRST EDITION                                    ║
+║       POWER-BHOOMI v7.0 - COLUMN MAPPING FIX (12 WORKERS)                            ║
 ╠══════════════════════════════════════════════════════════════════════════════════════╣
-║  🏗️  ARCHITECTURE:                                                                    ║
-║   • Service154 skeleton API + Service2 owner extraction (hybrid)                     ║
-║   • 24 Parallel Browser Workers (no captcha, no auth)                                ║
-║   • Singleton coordinator + DB-backed event log (state survives browser refresh)     ║
-║   • Phase 2 auto-retry of skipped surveys                                            ║
-║   • Stale 'running' sessions auto-marked 'interrupted' on server restart             ║
-║                                                                                       ║
+║  🏥 ENTERPRISE FEATURES:                                                             ║
+║   • 12 Parallel Browser Workers (3x Performance)                                     ║
+║   • Proactive Portal Health Monitoring (Dedicated health worker)                     ║
+║   • Auto Pause/Resume on portal issues                                               ║
+║   • 99%+ Accuracy with comprehensive retry strategies                                ║
+║   • Intelligent State Management (Crash recovery)                                    ║
+║   • Smart Stop with confidence scoring                                               ║
+║   • Real-time SQLite + CSV persistence                                               ║
+║                                                                                      ║
 ║  🌐 OPEN YOUR BROWSER:                                                               ║
 ║       http://localhost:5001                                                          ║
 ║                                                                                      ║
 ╚══════════════════════════════════════════════════════════════════════════════════════╝
     """)
-    # v11.0: Auto-open browser. Spawned in a daemon thread so Flask starts first;
-    # the 2s sleep gives the server time to bind to the port before we navigate.
-    # Disabled when running inside Flask's reloader child process (avoids double-opening).
-    if not os.environ.get('WERKZEUG_RUN_MAIN'):
-        def _open_browser():
-            import webbrowser, time as _t
-            _t.sleep(2.0)
-            try:
-                webbrowser.open(f'http://localhost:{Config.PORT}', new=2)
-                logger.info(f"🌐 Opening http://localhost:{Config.PORT} in default browser")
-            except Exception as e:
-                logger.debug(f"Browser auto-open failed (run manually): {e}")
-        threading.Thread(target=_open_browser, daemon=True).start()
-    
     # IMPORTANT: use_reloader=False prevents server restart when code changes mid-search
     app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG, threaded=True, use_reloader=False)
 
