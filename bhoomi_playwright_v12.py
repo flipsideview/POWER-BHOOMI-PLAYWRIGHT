@@ -74,9 +74,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 class Config:
     """Enterprise configuration for v11.0 — skeleton-first hybrid (S154 + S2)"""
     # Server
-    HOST = '0.0.0.0'
+    # v12.2 (audit H2): bind localhost by default — the previous 0.0.0.0 +
+    # debug=True exposed every control API (including /api/search/stop) and the
+    # Werkzeug interactive debugger (an RCE surface) to the whole LAN.
+    # Set BHOOMI_HOST=0.0.0.0 explicitly if remote access is genuinely wanted.
+    HOST = os.environ.get('BHOOMI_HOST', '127.0.0.1')
     PORT = 5001
-    DEBUG = True
+    DEBUG = False
     
     # ═══════════════════════════════════════════════════════════════════════════════════
     # WORKER SCALING: 24 workers for high-throughput production operation
@@ -1473,10 +1477,33 @@ class RateLimiter:
 # Conservative for portal - each worker effectively gets 0.3 req/sec sustained
 _global_rate_limiter = RateLimiter(requests_per_second=4.0, burst_size=24)
 
+
+def _rate_gate(context: str = '') -> bool:
+    """v12.2 (audit H1): honor the rate limiter's verdict.
+
+    Previously every call site discarded acquire()'s return value — on a 30s
+    token timeout the request proceeded anyway, so the limiter never actually
+    limited under exactly the contention it exists for. This gate retries the
+    acquire up to 4×30s, logging each starve; only after ~120s of continuous
+    starvation does it let the request through (with a loud warning) so a
+    limiter pathology can never deadlock a worker.
+    Returns True if a token was obtained, False if it gave up waiting.
+    """
+    for attempt in range(1, 5):
+        if _global_rate_limiter.acquire(timeout=30.0):
+            return True
+        logger.warning(
+            f"Rate limiter starved {attempt * 30}s"
+            + (f" [{context}]" if context else "")
+            + " — portal request pressure exceeds sustainable rate"
+        )
+    logger.warning("Rate limiter starved 120s — proceeding WITHOUT token (avoiding worker deadlock)")
+    return False
+
 def rate_limited_request(func):
     """Decorator to rate limit portal requests"""
     def wrapper(*args, **kwargs):
-        _global_rate_limiter.acquire()
+        _rate_gate()
         return func(*args, **kwargs)
     return wrapper
 
@@ -1511,6 +1538,9 @@ class LandRecord:
     period: str
     owner_name: str
     extent: str
+    # v12.2 (audit C2): position of this owner row within the parcel's result
+    # table — makes identical co-owner rows distinct records.
+    owner_seq: int = 0
     # 🔧 v7.0: Removed khatah - portal no longer has Khata column
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     worker_id: int = 0
@@ -1929,11 +1959,19 @@ class DatabaseManager:
                         period TEXT,
                         owner_name TEXT,
                         extent TEXT,
+                        owner_seq INTEGER DEFAULT 0,
                         is_match INTEGER DEFAULT 0,
                         worker_id INTEGER DEFAULT 0,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (session_id) REFERENCES search_sessions(session_id),
-                        UNIQUE(session_id, village, survey_no, surnoc, hissa, period, owner_name)
+                        -- v12.2 (audit C1/C2): identity includes extent AND owner_seq.
+                        -- extent: an owner can legitimately hold multiple extents in one
+                        -- parcel — the old key silently dropped them (735 rows measured).
+                        -- owner_seq: row position within the parcel's result table, so
+                        -- two co-owners with identical name+extent are distinct rows,
+                        -- while a re-scrape of the same page reproduces the same seqs
+                        -- and still dedups cleanly via INSERT OR IGNORE.
+                        UNIQUE(session_id, village, survey_no, surnoc, hissa, period, owner_name, extent, owner_seq)
                     )
                 ''')
                 
@@ -1966,6 +2004,50 @@ class DatabaseManager:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_records_match ON land_records(is_match)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_progress_session ON village_progress(session_id)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_status ON search_sessions(status)')
+
+                # ═══════════════════════════════════════════════════════════════
+                # v12.2 MIGRATION (audit C1): existing DBs created before the
+                # extent/owner_seq identity fix must be rebuilt — SQLite cannot
+                # alter a table-level UNIQUE in place. Runs once, at startup,
+                # before any worker writes. Existing rows are preserved verbatim
+                # (owner_seq backfilled as 0).
+                # ═══════════════════════════════════════════════════════════════
+                row = cursor.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='land_records'"
+                ).fetchone()
+                if row and 'owner_seq' not in row[0]:
+                    logger.warning("v12.2 migration: rebuilding land_records with extent+owner_seq identity...")
+                    cursor.execute("ALTER TABLE land_records RENAME TO land_records_old")
+                    cursor.execute('''
+                        CREATE TABLE land_records (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            session_id TEXT NOT NULL,
+                            district TEXT, taluk TEXT, hobli TEXT, village TEXT,
+                            survey_no INTEGER, surnoc TEXT, hissa TEXT, period TEXT,
+                            owner_name TEXT, extent TEXT,
+                            owner_seq INTEGER DEFAULT 0,
+                            is_match INTEGER DEFAULT 0,
+                            worker_id INTEGER DEFAULT 0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (session_id) REFERENCES search_sessions(session_id),
+                            UNIQUE(session_id, village, survey_no, surnoc, hissa, period, owner_name, extent, owner_seq)
+                        )''')
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO land_records
+                            (id, session_id, district, taluk, hobli, village, survey_no,
+                             surnoc, hissa, period, owner_name, extent, owner_seq,
+                             is_match, worker_id, created_at)
+                        SELECT id, session_id, district, taluk, hobli, village, survey_no,
+                               surnoc, hissa, period, owner_name, extent, 0,
+                               is_match, worker_id, created_at
+                        FROM land_records_old''')
+                    migrated = cursor.execute("SELECT COUNT(*) FROM land_records").fetchone()[0]
+                    cursor.execute("DROP TABLE land_records_old")
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_records_session ON land_records(session_id)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_records_village ON land_records(village)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_records_owner ON land_records(owner_name)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_records_match ON land_records(is_match)')
+                    logger.warning(f"v12.2 migration complete: {migrated} rows preserved")
                 
                 # Skipped Items Table - For 100% accuracy retry
                 cursor.execute('''
@@ -2218,8 +2300,8 @@ class DatabaseManager:
                             INSERT OR IGNORE INTO land_records (
                                 session_id, district, taluk, hobli, village,
                                 survey_no, surnoc, hissa, period,
-                                owner_name, extent, is_match, worker_id
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                owner_name, extent, owner_seq, is_match, worker_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             session_id,
                             record.get('district', ''),
@@ -2232,6 +2314,7 @@ class DatabaseManager:
                             record.get('period', ''),
                             record.get('owner_name', ''),
                             record.get('extent', ''),
+                            record.get('owner_seq', 0),
                             1 if is_match else 0,
                             record.get('worker_id', 0)
                         ))
@@ -2551,8 +2634,8 @@ class DatabaseManager:
         if not records:
             return None
         
-        fieldnames = ['district', 'taluk', 'hobli', 'village', 'survey_no', 
-                      'surnoc', 'hissa', 'period', 'owner_name', 'extent', 'created_at']
+        fieldnames = ['district', 'taluk', 'hobli', 'village', 'survey_no',
+                      'surnoc', 'hissa', 'period', 'owner_name', 'extent', 'owner_seq', 'created_at']
         
         with open(output_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
@@ -2712,6 +2795,23 @@ class BhoomiAPI:
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # SEARCH WORKER
 # ═══════════════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════════════
+# v12.1: OWNER-NAME MATCH NORMALIZATION
+# ───────────────────────────────────────────────────────────────────────────────────────
+# Bhoomi returns owner names in KANNADA. A search entered in English (Latin) can never
+# substring-match Kannada text — this silently produced matches=0 for real hits (e.g.
+# "KUMARASWAMY" vs "ಕುಮಾರಸ್ವಾಮಿ"). We also collapse internal whitespace so spacing
+# variants of the SAME Kannada name match ("ಕುಮಾರ ಸ್ವಾಮಿ" == "ಕುಮಾರಸ್ವಾಮಿ").
+# ═══════════════════════════════════════════════════════════════════════════════════════
+def _norm_for_match(s: str) -> str:
+    """Lowercase + strip ALL whitespace for script-safe substring comparison."""
+    return ''.join(str(s).split()).lower()
+
+def _is_latin_only(s: str) -> bool:
+    """True if the string has letters and ALL of them are ASCII Latin (a-z)."""
+    letters = [c for c in str(s) if c.isalpha()]
+    return bool(letters) and all(ord(c) < 128 for c in letters)
+
 
 class SearchWorker:
     """
@@ -2980,6 +3080,11 @@ class SearchWorker:
             # Check for visible alert elements
             page_content = self.page.content()
             
+            # v12.2 (audit H3): 'please try again' removed — it is generic UI
+            # boilerplate that can occur on healthy pages; a false hit here burns
+            # a full 5-retry backoff ladder per survey. The remaining phrases are
+            # portal-outage specific ('try after some time' covers the real
+            # Kannada-portal error message this list was built for).
             portal_issues = [
                 'facing some issues',
                 'try after some time',
@@ -2987,7 +3092,6 @@ class SearchWorker:
                 'service unavailable',
                 'server error',
                 'technical difficulties',
-                'please try again',
                 'contact bhoomi'
             ]
             
@@ -3195,7 +3299,7 @@ class SearchWorker:
                     # Attempt 3: re-issue GO to refresh the dropdown state
                     try:
                         self.page.fill(f'#{IDS["survey_no"]}', str(survey_no))
-                        _global_rate_limiter.acquire()
+                        _rate_gate()
                         self.page.evaluate(f'document.getElementById("{IDS["go_btn"]}").click()')
                         self.page.wait_for_load_state('domcontentloaded')
                         time.sleep(Config.POST_CLICK_WAIT)
@@ -3310,6 +3414,7 @@ class SearchWorker:
                             owners.append({
                                 'owner_name': name_match.group(1).strip(),
                                 'extent': extent_match.group(1) if extent_match else '',
+                                'owner_seq': len(owners),
                             })
                 
                 if not owners:
@@ -3387,13 +3492,15 @@ class SearchWorker:
                         if any(skip in owner_name for skip in ['Select', 'ಆಯ್ಕೆ', 'Toggle']):
                             continue
                         
-                        owner_entry = {
+                        # v12.2 (audit C2): value-dedup removed. Each accepted table
+                        # row is a distinct ownership entry — two co-owners with the
+                        # same name AND extent are two records. owner_seq (row order)
+                        # carries the identity; the DB key dedups re-scrapes instead.
+                        owners.append({
                             'owner_name': owner_name,
                             'extent': extent,
-                        }
-                        
-                        if owner_entry not in owners:
-                            owners.append(owner_entry)
+                            'owner_seq': len(owners),
+                        })
             
             # Log extraction result for debugging
             if not owners:
@@ -3595,7 +3702,7 @@ class SearchWorker:
                 self.page.fill(f'#{IDS["survey_no"]}', str(survey_no))
                 
                 # Click GO using JavaScript (CRITICAL: Portal requires JS click, not direct click)
-                _global_rate_limiter.acquire()
+                _rate_gate()
                 self.page.evaluate(f'document.getElementById("{IDS["go_btn"]}").click()')
                 self.page.wait_for_load_state('domcontentloaded')
                 time.sleep(Config.POST_CLICK_WAIT)
@@ -4104,7 +4211,7 @@ class SearchWorker:
                                             
                                             while not fetch_success and fetch_retries < max_fetch_retries:
                                                 # Click Fetch using JavaScript (CRITICAL: Portal requires JS click)
-                                                _global_rate_limiter.acquire()
+                                                _rate_gate()
                                                 self.page.evaluate(f'document.getElementById("{IDS["fetch_btn"]}").click()')
                                                 self.page.wait_for_load_state('domcontentloaded')
                                                 time.sleep(Config.POST_CLICK_WAIT)
@@ -4203,7 +4310,7 @@ class SearchWorker:
                                                     time.sleep(refetch_wait * refetch_attempt)  # progressive backoff: 5s, 10s, 15s
                                                     
                                                     try:
-                                                        _global_rate_limiter.acquire()
+                                                        _rate_gate()
                                                         self.page.evaluate(f'document.getElementById("{IDS["fetch_btn"]}").click()')
                                                         self.page.wait_for_load_state('domcontentloaded')
                                                         time.sleep(Config.POST_CLICK_WAIT + 2)  # extra wait for AJAX
@@ -4273,13 +4380,14 @@ class SearchWorker:
                                                     period=period,
                                                     owner_name=owner['owner_name'],
                                                     extent=owner['extent'],
+                                                    owner_seq=owner.get('owner_seq', 0),
                                                     worker_id=self.worker_id
                                                 )
                                                 
                                                 record_dict = asdict(record)
                                                 
                                                 # Check for match
-                                                is_match = any(v.lower() in owner['owner_name'].lower() for v in owner_variants if v)
+                                                is_match = any(_norm_for_match(v) in _norm_for_match(owner['owner_name']) for v in owner_variants if v)
                                                 
                                                 # SAVE TO PERSISTENT DATABASE (REAL-TIME)
                                                 try:
@@ -4901,7 +5009,7 @@ class SearchWorker:
                     
                     self.page.fill(f'#{IDS["survey_no"]}', str(retry_survey_no))
                     
-                    _global_rate_limiter.acquire()
+                    _rate_gate()
                     self.page.click(f'#{IDS["go_btn"]}')
                     self.page.wait_for_load_state('domcontentloaded')
                     time.sleep(Config.POST_CLICK_WAIT + 2)
@@ -5087,9 +5195,28 @@ class SearchWorker:
                             # Still retry same village with new browser attempt
                             time.sleep(5)
                     else:
-                        # Non-browser error, log and move to next village
+                        # v12.2 (audit H4): a non-browser error previously skipped the
+                        # village with only a log line — no villages_failed entry, no
+                        # retry queue, invisible to the coverage audit. Now the village
+                        # is tracked as failed AND queued for the coverage pass, which
+                        # re-enumerates it after Phase 1.
                         self.errors += 1
-                        self._add_log(f"📝 Non-critical error, continuing: {str(village_error)[:50]}")
+                        self._add_log(
+                            f"❌ Village error ({str(village_error)[:50]}) — "
+                            f"{village_name} queued for coverage re-run"
+                        )
+                        with self.state_lock:
+                            if village_name not in self.state.villages_failed:
+                                self.state.villages_failed.append(village_name)
+                            self.state.unfinished_villages.append(
+                                (village_code, village_name, hobli_code, hobli_name)
+                            )
+                        if self.db and self.session_id:
+                            try:
+                                self.db.fail_village(self.session_id, f"{hobli_code}:{village_code}",
+                                                     str(village_error)[:200])
+                            except Exception:
+                                pass
                         idx += 1
             
             self._update_status(status='completed')
@@ -5192,7 +5319,7 @@ class SearchWorker:
                             
                             # Enter survey number and click GO
                             self.page.fill(f'#{IDS["survey_no"]}', str(survey_no))
-                            _global_rate_limiter.acquire()
+                            _rate_gate()
                             self.page.evaluate(f'document.getElementById("{IDS["go_btn"]}").click()')
                             self.page.wait_for_load_state('domcontentloaded')
                             time.sleep(Config.POST_CLICK_WAIT)
@@ -5259,7 +5386,7 @@ class SearchWorker:
                                                     self._pw_select_text(IDS['period'], period)
                                                     time.sleep(1)
                                                     
-                                                    _global_rate_limiter.acquire()
+                                                    _rate_gate()
                                                     self.page.evaluate(f'document.getElementById("{IDS["fetch_btn"]}").click()')
                                                     self.page.wait_for_load_state('domcontentloaded')
                                                     time.sleep(Config.POST_CLICK_WAIT)
@@ -5283,11 +5410,12 @@ class SearchWorker:
                                                             period=period,
                                                             owner_name=owner['owner_name'],
                                                             extent=owner['extent'],
+                                                            owner_seq=owner.get('owner_seq', 0),
                                                             worker_id=self.worker_id
                                                         )
                                                         record_dict = asdict(record)
                                                         is_match = any(
-                                                            v.lower() in owner['owner_name'].lower()
+                                                            _norm_for_match(v) in _norm_for_match(owner['owner_name'])
                                                             for v in owner_variants if v
                                                         )
                                                         
@@ -5828,6 +5956,14 @@ class ParallelSearchCoordinator:
             with self.state_lock:
                 self.state.logs.append(f"💾 Database session created: {self.current_session_id}")
                 self.state.logs.append(f"📁 Data saved to: {self.db.db_path}")
+                # v12.1: Bhoomi returns owner names in KANNADA. Warn loudly if the query
+                # is Latin-only — it will be scraped fine but NEVER flagged as a match.
+                if _is_latin_only(owner_name):
+                    self.state.logs.append(
+                        "⚠️ WARNING: owner name is in ENGLISH but Bhoomi records are in "
+                        "KANNADA — matches will show 0. Enter the name in Kannada "
+                        "(e.g. ಕುಮಾರಸ್ವಾಮಿ) for match highlighting."
+                    )
             
             # ═══════════════════════════════════════════════════════════════════════
             # INITIALIZE STATE MANAGER - Enterprise state preservation
@@ -5852,9 +5988,9 @@ class ParallelSearchCoordinator:
             
             # Initialize CSV writers (backup to database)
             # 🔧 v7.0: Removed khatah - portal no longer has Khata column
-            fieldnames = ['district', 'taluk', 'hobli', 'village', 'survey_no', 
-                         'surnoc', 'hissa', 'period', 'owner_name', 'extent', 
-                         'timestamp', 'worker_id']
+            fieldnames = ['district', 'taluk', 'hobli', 'village', 'survey_no',
+                         'surnoc', 'hissa', 'period', 'owner_name', 'extent',
+                         'owner_seq', 'timestamp', 'worker_id']
             
             self.all_records_writer = ThreadSafeCSVWriter(self.state.all_records_file, fieldnames)
             self.matches_writer = ThreadSafeCSVWriter(self.state.matches_file, fieldnames)
@@ -8392,7 +8528,42 @@ HTML_TEMPLATE = '''
                 }
                 // Inform user when a session is currently active (running or completed)
                 else if (info.session && info.session.status === 'running' && info.is_active) {
-                    addLog(`▶️ Active session in progress: '${info.session_id}'. Live updates streaming...`);
+                    // ═══════════════════════════════════════════════════════════
+                    // v12.2 FIX (session resurrection): restoring the DATA is not
+                    // enough — the page must also reconnect the live CONTROLS,
+                    // exactly as startSearch() does after a successful start.
+                    // Without this, a browser crash/refresh during a run showed a
+                    // dead idle form over a live search: Start button (→ 409 on
+                    // click), no polling, frozen panels, while claiming "live
+                    // updates streaming". Mirrors startSearch() lines post-start.
+                    // ═══════════════════════════════════════════════════════════
+                    searchRunning = true;
+                    searchBtn.innerHTML = '<span class="spinner"></span><span>Stop Search</span>';
+                    searchBtn.classList.add('btn-stop');
+                    const progressSection = document.getElementById('progressSection');
+                    if (progressSection) progressSection.style.display = 'block';
+                    const controls = document.getElementById('searchControls');
+                    if (controls) {
+                        controls.style.display = 'flex';
+                        document.getElementById('pauseBtn').style.display = 'block';
+                        document.getElementById('resumeBtn').style.display = 'none';
+                    }
+                    const accuracySection = document.getElementById('accuracySection');
+                    if (accuracySection) accuracySection.style.display = 'grid';
+                    const heartbeatContainer = document.getElementById('heartbeatContainer');
+                    if (heartbeatContainer) heartbeatContainer.style.display = 'flex';
+                    // Restore the owner-name field so the visible form matches
+                    // the run this page just reattached to.
+                    if (info.session.owner_name && ownerInput && !ownerInput.value.trim()) {
+                        ownerInput.value = info.session.owner_name;
+                    }
+                    // Start polling + heartbeat — guarded so a double invocation
+                    // can never stack intervals.
+                    if (!pollInterval) pollInterval = setInterval(pollStatus, 1500);
+                    if (!heartbeatCheckInterval) heartbeatCheckInterval = setInterval(checkHeartbeat, 2000);
+                    notRunningCount = 0;
+                    lastUpdateTime = null;
+                    addLog(`▶️ Reattached to running session '${info.session_id}' — live updates resumed.`);
                 }
                 else if (info.session && info.session.status === 'completed') {
                     const recs = (info.record_count || 0).toLocaleString();
@@ -9967,7 +10138,76 @@ def export_current_skipped_csv():
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════════════
 
+
+def repair_import_csv(csv_path: str, session_id: str) -> dict:
+    """v12.2 (audit C1 repair): re-import a live all_records CSV into a session.
+
+    The pre-v12.2 UNIQUE key silently dropped same-owner multi-extent rows from
+    the DB; the live writer CSV kept every extracted row. This re-imports the
+    CSV with the new identity (extent + owner_seq): rows already present dedup
+    via INSERT OR IGNORE, previously-dropped rows are restored. owner_seq is
+    assigned per occurrence within each (parcel, owner, extent) group, and
+    is_match is recomputed from the session's stored owner_variants.
+    """
+    import collections
+    db = get_database()
+    sess = db.get_session(session_id)
+    if not sess:
+        return {'error': f'session not found: {session_id}'}
+    try:
+        variants = json.loads(sess.get('owner_variants') or '[]')
+        if isinstance(variants, str):
+            variants = json.loads(variants)
+    except Exception:
+        variants = [sess.get('owner_name', '')]
+
+    # Build all rows first (seq assignment per identical-key occurrence), then
+    # import in ONE transaction — per-row round-trips would take minutes on an
+    # 80k-row CSV and hold the write lock far longer than necessary.
+    seen_seq = collections.Counter()
+    rows_out = []
+    with open(csv_path, encoding='utf-8') as fh:
+        for row in csv.DictReader(fh):
+            key = (row.get('village',''), row.get('survey_no',''), row.get('surnoc',''),
+                   row.get('hissa',''), row.get('period',''), row.get('owner_name',''),
+                   row.get('extent',''))
+            seq = row.get('owner_seq')
+            if seq in (None, ''):
+                seq = seen_seq[key]
+            seen_seq[key] += 1
+            owner = row.get('owner_name','')
+            is_match = any(_norm_for_match(v) in _norm_for_match(owner) for v in variants if v)
+            rows_out.append((
+                session_id, row.get('district',''), row.get('taluk',''), row.get('hobli',''),
+                row.get('village',''), row.get('survey_no',0), row.get('surnoc',''),
+                row.get('hissa',''), row.get('period',''), owner, row.get('extent',''),
+                int(seq), 1 if is_match else 0, row.get('worker_id',0) or 0,
+            ))
+    with db.lock:
+        with db.get_connection() as conn:
+            before = conn.execute("SELECT COUNT(*) FROM land_records WHERE session_id=?",
+                                  (session_id,)).fetchone()[0]
+            conn.executemany('''
+                INSERT OR IGNORE INTO land_records (
+                    session_id, district, taluk, hobli, village, survey_no, surnoc,
+                    hissa, period, owner_name, extent, owner_seq, is_match, worker_id
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', rows_out)
+            after = conn.execute("SELECT COUNT(*) FROM land_records WHERE session_id=?",
+                                 (session_id,)).fetchone()[0]
+    result = {'csv_rows': len(rows_out), 'newly_imported': after - before, 'session': session_id}
+    logger.info(f"repair_import_csv: {result}")
+    return result
+
+
 if __name__ == '__main__':
+    # v12.2: repair mode — restore rows the old UNIQUE key dropped, from a live CSV.
+    #   ./venv/bin/python bhoomi_playwright_v12.py --repair-import <all_records.csv> <session_id>
+    if '--repair-import' in sys.argv:
+        _i = sys.argv.index('--repair-import')
+        _csv, _sid = sys.argv[_i+1], sys.argv[_i+2]
+        print(json.dumps(repair_import_csv(_csv, _sid), indent=2))
+        sys.exit(0)
+
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
 ║       POWER-BHOOMI v12.0 - COMPLETION-HARDENED EDITION                               ║
