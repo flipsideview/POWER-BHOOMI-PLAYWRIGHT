@@ -52,6 +52,12 @@ logs/
 tmp/
 temp/
 
+# Record-room (RRS) tools: browser profile holds the logged-in portal session
+rrs_profile/
+rrs_page.html
+rrs_debug_*.html
+rrs_viewer_debug.html
+
 
 
 
