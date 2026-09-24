@@ -204,6 +204,18 @@ def is_login_page(page: Page) -> bool:
         return False
 
 
+def session_active(page: Page) -> bool:
+    """Background check: does the RRS request page load without a login bounce?"""
+    try:
+        return bool(page.evaluate("""async (url) => {
+            const r = await fetch(url, {credentials: 'same-origin', cache: 'no-store'});
+            const t = await r.text();
+            return r.url.includes('RRSRequest') && t.includes('txt_file_desc');
+        }""", RRS_REQUEST_URL))
+    except Exception:
+        return False
+
+
 def ensure_logged_in(page: Page, wait_minutes: int = 10) -> bool:
     """Navigate to RRSRequest; if bounced to login, wait for the human to log in."""
     page.goto(RRS_REQUEST_URL, wait_until="domcontentloaded")
@@ -222,10 +234,12 @@ def ensure_logged_in(page: Page, wait_minutes: int = 10) -> bool:
     while time.time() < deadline:
         time.sleep(3)
         try:
-            if not is_login_page(page):
-                if "RRSRequest" not in page.url:
-                    page.goto(RRS_REQUEST_URL, wait_until="domcontentloaded")
-                    page.wait_for_load_state("networkidle")
+            # The login may happen in any tab of this browser (cookies are
+            # shared), so probe the session in the background instead of
+            # watching one tab — never reload a tab the user may be typing in.
+            if not is_login_page(page) or session_active(page):
+                page.goto(RRS_REQUEST_URL, wait_until="domcontentloaded")
+                page.wait_for_load_state("networkidle")
                 if not is_login_page(page):
                     log("Login detected.")
                     save_session(page)
