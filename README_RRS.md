@@ -113,6 +113,11 @@ N villages, for testing).
 Shows, per district: villages known, villages with files, empty, error, pending, and the
 number of file listings; plus the total of unique files catalogued.
 
+The portal returns at most 2,000 cards per search. Villages larger than that are fetched
+automatically in slices (registers separately, files split by survey-number prefix) — the
+log shows `[sliced: N queries]` for them. `status` also reports how many villages were
+sliced and whether any slice still hit the cap (`still hitting the portal cap`).
+
 ### 2.4 Export to CSV
 
 ```bash
