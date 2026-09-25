@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS village_files(
 CREATE INDEX IF NOT EXISTS ix_vf_file ON village_files(file_id);
 CREATE INDEX IF NOT EXISTS ix_v_status ON villages(status);
 """
+# columns added after the first crawls; applied with ALTER TABLE if missing
+VILLAGE_EXTRA_COLUMNS = {"queries": "INTEGER", "truncated": "INTEGER"}
 
 log = rrs.log
 
@@ -132,6 +134,11 @@ def open_db() -> sqlite3.Connection:
     con = sqlite3.connect(str(DB_PATH))
     con.execute("PRAGMA journal_mode=WAL")
     con.executescript(SCHEMA)
+    have = {r[1] for r in con.execute("PRAGMA table_info(villages)")}
+    for col, typ in VILLAGE_EXTRA_COLUMNS.items():
+        if col not in have:
+            con.execute(f"ALTER TABLE villages ADD COLUMN {col} {typ}")
+    con.commit()
     return con
 
 
@@ -202,14 +209,22 @@ def get_villages(page, d, t, h):
                       {"DistrictCode": str(d), "TalukCode": str(t), "HobliCode": str(h)})]
 
 
-def search_village(page, v: sqlite3.Row):
-    """All files tagged to a village: blank survey number. Returns HTML or None (no files)."""
+CARD_CAP = 2000          # the portal returns at most this many cards per query
+MAX_PREFIX_DEPTH = 4     # survey-number prefixes up to 4 digits ("1234*")
+SLICE_DELAY = 0.25       # s between the sub-queries of a capped village
+
+
+def search_village(page, v: sqlite3.Row, survey: str = "", filereg: str = "0",
+                   type_code: str = ""):
+    """Files tagged to a village. Blank survey number = every file; "12*" =
+    survey numbers starting with 12; filereg 100 = files, 99 = registers.
+    Returns HTML or None (no files)."""
     body = {"census_dist_code": str(v["dist_code"]), "census_taluk_code": str(v["taluk_code"]),
             "hobli_code": str(v["hobli_code"]), "village_code": str(v["village_code"]),
-            "FileReg": "0", "survey_no": "", "fileorregistertypeval": "null",
+            "FileReg": filereg, "survey_no": survey, "fileorregistertypeval": type_code,
             "dist_name": v["dist_name"] or "", "taluk_name": v["taluk_name"] or "",
             "hobli_name": v["hobli_name"] or "", "village_name": v["village_name"] or "",
-            "fileorregister": "ALL", "fileorregistertype": ""}
+            "fileorregister": "", "fileorregistertype": ""}
     text = post(page, "/Service4/RRS/GetFilesBySurveyNumber", body)
     head = text.lstrip()[:1]
     if head in ("{", '"'):
@@ -232,11 +247,86 @@ def search_village(page, v: sqlite3.Row):
     return text
 
 
+def register_types(page, dist_code, taluk_code) -> list:
+    """Register type codes for a taluk (the survey modal's type dropdown)."""
+    data = post_list(page, "/Service4/RRS/GetFileOrRegisterTypeSN",
+                     {"FileOrRegType": "99", "pDistCode": str(dist_code),
+                      "pTalukCode": str(taluk_code)})
+    return [str(x.get("register_type_code", x.get("categoryid"))) for x in data]
+
+
+def merge_cards(into: dict, more: dict) -> None:
+    for fid, rec in more.items():
+        if fid in into:
+            into[fid]["tags"] += rec["tags"]
+        else:
+            into[fid] = rec
+
+
+def fetch_village(page, v: sqlite3.Row) -> tuple:
+    """Every file listed for a village, working around the portal's cap of
+    CARD_CAP cards per response. Returns (files, queries, truncated).
+
+    Verified on a capped village: the blank query showed 1,924 unique files;
+    registers (no survey tag, so unreachable by prefix) + files split by
+    survey-number prefix gave 3,960 and covered the blank result entirely."""
+    html = search_village(page, v)
+    files = parse_cards(html) if html else {}
+    queries = 1
+    if sum(r["tags"] for r in files.values()) < CARD_CAP:
+        return files, queries, False
+
+    merged, truncated = {}, False
+
+    # 1. registers: one slice, split by register type only if that is capped too
+    time.sleep(SLICE_DELAY)
+    html = search_village(page, v, filereg="99")
+    queries += 1
+    regs = parse_cards(html) if html else {}
+    if sum(r["tags"] for r in regs.values()) >= CARD_CAP:
+        regs = {}
+        for code in register_types(page, v["dist_code"], v["taluk_code"]):
+            time.sleep(SLICE_DELAY)
+            html = search_village(page, v, filereg="99", type_code=code)
+            queries += 1
+            part = parse_cards(html) if html else {}
+            if sum(r["tags"] for r in part.values()) >= CARD_CAP:
+                truncated = True
+            merge_cards(regs, part)
+    merge_cards(merged, regs)
+
+    # 2. files: recursive survey-number prefix partition ("1*" → "10*".."19*" → ...)
+    def expand(prefix: str) -> None:
+        nonlocal queries, truncated
+        time.sleep(SLICE_DELAY)
+        html = search_village(page, v, survey=prefix + "*", filereg="100")
+        queries += 1
+        part = parse_cards(html) if html else {}
+        if sum(r["tags"] for r in part.values()) < CARD_CAP:
+            merge_cards(merged, part)
+            return
+        if len(prefix) >= MAX_PREFIX_DEPTH:
+            merge_cards(merged, part)
+            truncated = True
+            return
+        for digit in "0123456789":
+            expand(prefix + digit)
+
+    for digit in "0123456789":
+        expand(digit)
+
+    # anything the capped blank query showed that the slices somehow did not
+    for fid, rec in files.items():
+        if fid not in merged:
+            merged[fid] = rec
+    return merged, queries, truncated
+
+
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # CARD PARSING
 # ═══════════════════════════════════════════════════════════════════════════════════════
 
-FIELD_KEYS = (("office", ("office name",)), ("file_no", ("file no",)),
+FIELD_KEYS = (("office", ("office name",)), ("file_no", ("file no", "volume no")),
               ("subject", ("sub",)), ("year", ("year",)))
 
 
@@ -409,9 +499,11 @@ def build_tree(con, page, dist_codes: list, taluk_filter: set) -> None:
 # CRAWL
 # ═══════════════════════════════════════════════════════════════════════════════════════
 
-def store_village(con, v, files: dict) -> int:
+def store_village(con, v, files: dict, queries: int = 1, truncated: bool = False) -> int:
     new = 0
     key = (v["dist_code"], v["taluk_code"], v["hobli_code"], v["village_code"])
+    con.execute("DELETE FROM village_files WHERE dist_code=? AND taluk_code=? AND hobli_code=?"
+                " AND village_code=?", key)          # re-crawl of a capped village
     for fid, r in files.items():
         cur = con.execute(
             "INSERT OR IGNORE INTO files(file_id, office_code, office, file_no, subject, year, kind,"
@@ -424,9 +516,10 @@ def store_village(con, v, files: dict) -> int:
             (*key, fid, r["tags"], survey_hint(r["subject"])))
     status = "done" if files else "empty"
     con.execute(
-        "UPDATE villages SET status=?, files=?, cards=?, error=NULL, crawled_at=?"
-        " WHERE dist_code=? AND taluk_code=? AND hobli_code=? AND village_code=?",
-        (status, len(files), sum(r["tags"] for r in files.values()), now(), *key))
+        "UPDATE villages SET status=?, files=?, cards=?, queries=?, truncated=?, error=NULL,"
+        " crawled_at=? WHERE dist_code=? AND taluk_code=? AND hobli_code=? AND village_code=?",
+        (status, len(files), sum(r["tags"] for r in files.values()), queries,
+         int(truncated), now(), *key))
     con.commit()
     return new
 
@@ -448,7 +541,10 @@ def cmd_crawl(args) -> int:
         build_tree(con, page, dist_codes, taluk_filter)
 
         statuses = ("pending", "error") if args.retry_errors else ("pending",)
-        q = (f"SELECT * FROM villages WHERE status IN ({','.join('?' * len(statuses))})"
+        # villages crawled before cap handling existed (2000 cards, no query
+        # count recorded) are picked up again and re-fetched in slices
+        q = (f"SELECT * FROM villages WHERE (status IN ({','.join('?' * len(statuses))})"
+             f" OR (status='done' AND cards >= {CARD_CAP} AND queries IS NULL))"
              f" AND dist_code IN ({','.join('?' * len(dist_codes))})")
         params = [*statuses, *dist_codes]
         if taluk_filter:
@@ -466,15 +562,17 @@ def cmd_crawl(args) -> int:
             for i, v in enumerate(todo, 1):
                 where = f"{v['dist_code']}/{v['taluk_code']}/{v['hobli_code']}/{v['village_code']}"
                 try:
-                    html = with_retries(page, search_village, v)
-                    files = parse_cards(html) if html else {}
-                    new = store_village(con, v, files)
+                    files, queries, truncated = with_retries(page, fetch_village, v)
+                    new = store_village(con, v, files, queries, truncated)
                     n_files += len(files)
                     n_new += new
                     rate = (time.time() - t0) / i
                     eta = (len(todo) - i) * rate / 60
+                    note = f" [sliced: {queries} queries]" if queries > 1 else ""
+                    if truncated:
+                        note += " ⚠ still capped"
                     log(f"[{i}/{len(todo)}] {where} {v['village_name']}: "
-                        f"{len(files)} file(s), {new} new  | ETA {eta:.0f} min")
+                        f"{len(files)} file(s), {new} new{note}  | ETA {eta:.0f} min")
                 except ApplicantMissing:
                     raise SystemExit("Portal says applicant details are missing — complete the "
                                      "applicant step once in the browser, then re-run.")
@@ -523,10 +621,17 @@ def cmd_status(args) -> int:
             tot[k] += x or 0
     unique = con.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     known = con.execute("SELECT COUNT(*) FROM districts").fetchone()[0]
+    capped_old = con.execute(
+        f"SELECT COUNT(*) FROM villages WHERE status='done' AND cards >= {CARD_CAP}"
+        " AND queries IS NULL").fetchone()[0]
+    sliced = con.execute("SELECT COUNT(*) FROM villages WHERE queries > 1").fetchone()[0]
+    trunc = con.execute("SELECT COUNT(*) FROM villages WHERE truncated = 1").fetchone()[0]
     print("-" * 86)
     print(f"{'TOTAL':24} {tot[0]:>8} {tot[1]:>8} {tot[2]:>6} {tot[3]:>6} {tot[4]:>8} {tot[5]:>9}")
     print(f"\nUnique files catalogued: {unique}   |   districts with villages enumerated: "
           f"{len(rows)}/{known or 31}")
+    print(f"Large villages fetched in slices: {sliced}   |   still hitting the portal cap: {trunc}"
+          f"   |   capped before slicing existed (will be redone): {capped_old}")
     return 0
 
 
